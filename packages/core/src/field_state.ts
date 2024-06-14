@@ -1,8 +1,8 @@
 import { NonEnumerable } from './decorator';
-import { Effect } from './effect';
-import { BaseField } from './field';
-import { genId } from './id';
-import { Validator } from './validator';
+// import { Effect } from './effect';
+// import { BaseField } from './field';
+// import { genId } from './id';
+// import { Validator } from './validator';
 
 export enum ValidType {
   Unknown = 0,
@@ -33,39 +33,48 @@ export class FieldState<T> {
     this.$ignore = opts.ignore;
     this.$disabled = opts.disabled;
   }
-}
 
-export class StateNode<T> {
-  @NonEnumerable
-  $id: number;
-
-  @NonEnumerable
-  $effects: Effect<any>[] = [];
-
-  @NonEnumerable
-  $parent?: StateNode<unknown>;
-
-  @NonEnumerable
-  $state: FieldState<T>;
-
-  @NonEnumerable
-  $field: BaseField<T>;
-
-  get $value() {
-    return this.$state.$value;
-  }
-
-  get $raw() {
-    return this.$state.$raw;
-  }
-
-  constructor(field: BaseField<T>, state: FieldState<T>, effects: Effect<any>[] = []) {
-    this.$id = genId();
-    this.$field = field;
-    this.$state = state;
-    this.$effects = effects;
+  isEqual(newState: FieldState<T>) {
+    return (
+      this.$disabled === newState.$disabled &&
+      this.$ignore === newState.$ignore &&
+      this.$raw === newState.$raw &&
+      this.$value === newState.$value
+    );
   }
 }
+
+// export class StateNode<T> {
+//   @NonEnumerable
+//   $id: number;
+
+//   @NonEnumerable
+//   $effects: Effect<any>[] = [];
+
+//   @NonEnumerable
+//   $parent?: StateNode<unknown>;
+
+//   @NonEnumerable
+//   $state: FieldState<T>;
+
+//   @NonEnumerable
+//   $field: BaseField<T>;
+
+//   get $value() {
+//     return this.$state.$value;
+//   }
+
+//   get $raw() {
+//     return this.$state.$raw;
+//   }
+
+//   constructor(field: BaseField<T>, state: FieldState<T>, effects: Effect<any>[] = []) {
+//     this.$id = genId();
+//     this.$field = field;
+//     this.$state = state;
+//     this.$effects = effects;
+//   }
+// }
 
 // type ToStates<T> = T extends Array<any>
 //   ? StateArrayNode<T>

@@ -1,8 +1,9 @@
 import { NonEnumerable } from './decorator';
 import { ValidType } from './field_state';
 import { BaseField, BaseFieldOpts, EachFieldCallback, Field, IDENTITY } from './field';
-import { ChildrenState, GroupFieldState, GroupFieldStateOpts, ToFields } from './field_group';
+import { ChildrenState, GroupFieldState, FieldGroupStateOpts, ToFields } from './field_group';
 import { debug } from './log';
+import { FieldCompose } from './field_compose';
 
 // 这里要omit receive 和 transform
 export type FieldArrayOpts<T> = Omit<BaseFieldOpts<T>, 'receive' | 'transform'>;
@@ -11,37 +12,10 @@ export type FieldArrayChildrenType<T extends Array<any>> = Array<ToFields<T[numb
 
 export interface FieldArray<T extends Array<any>> extends FieldArrayChildrenType<T> {}
 
-export class FieldArray<T extends Array<any>> extends BaseField<T> {
-  @NonEnumerable
-  $children: FieldArrayChildrenType<T>;
-
-  @NonEnumerable
-  $state: GroupFieldState<T>;
-
-  get $valid() {
-    if (this.$state.$childrenState.$valid !== ValidType.Valid) {
-      return this.$state.$childrenState.$valid;
-    }
-    return super.$valid;
-  }
-
-  get $message() {
-    if (this.$state.$childrenState.$valid !== ValidType.Valid) {
-      return this.$state.$childrenState.$issueFields[0].$message;
-    }
-    return super.$message;
-  }
-
-  get $error() {
-    if (this.$state.$childrenState.$valid !== ValidType.Valid) {
-      return this.$state.$childrenState.$issueFields[0].$error;
-    }
-    return super.$error;
-  }
-
+export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArrayChildrenType<T>> {
   constructor(children: FieldArrayChildrenType<T>, opts?: FieldArrayOpts<T>) {
     const value = children.map((c) => c.$state.$value) as T;
-    super(value, {
+    super(value, children, {
       ...opts,
       transform: (raw: FieldArrayChildrenType<T>) =>
         raw.map((c: FieldArrayChildrenType<T>[number]) => c.$state.$value) as T,
@@ -51,14 +25,7 @@ export class FieldArray<T extends Array<any>> extends BaseField<T> {
       // @ts-ignore
       child.$parent = this;
     });
-    this.$state = new GroupFieldState({
-      value,
-      raw: this.$children,
-      disabled: opts?.disabled ?? false,
-      ignore: opts?.ignore ?? false,
-      childrenState: this.$megerChildState(),
-    });
-    return new Proxy(this, {
+    const proxy = new Proxy(this, {
       get(target, p) {
         if (p === IDENTITY) {
           return target;
@@ -79,52 +46,30 @@ export class FieldArray<T extends Array<any>> extends BaseField<T> {
         return true;
       },
     });
+    proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    return proxy;
   }
 
   @NonEnumerable
-  $self(): this {
-    // @ts-ignore
-    if (this[IDENTITY]) {
-      // @ts-ignore
-      return this[IDENTITY];
+  $mergeState(opts?: Partial<FieldGroupStateOpts<T>>): GroupFieldState<T> {
+    let newValue = [] as unknown as T;
+    if (!opts?.value) {
+      this.$eachField((field) => {
+        if (field.$state.$ignore) {
+          return true;
+        }
+        newValue.push(field.$value);
+        return true;
+      });
+    } else {
+      newValue = opts.value;
     }
-    return this;
-  }
 
-  @NonEnumerable
-  $megerChildState() {
-    const newChidrenState: ChildrenState = { $valid: ValidType.Valid, $issueFields: [] };
-    this.$eachField((field) => {
-      if (field.$state.$ignore) {
-        return;
-      }
-
-      if (field.$valid === ValidType.Invalid && newChidrenState.$valid !== ValidType.Invalid) {
-        newChidrenState.$valid = ValidType.Invalid;
-        newChidrenState.$issueFields.push(field as BaseField<unknown>);
-      } else if (field.$valid === ValidType.Unknown && newChidrenState.$valid !== ValidType.Unknown) {
-        newChidrenState.$valid = ValidType.Unknown;
-      }
-    });
-    return newChidrenState;
-  }
-
-  @NonEnumerable
-  $mergeState(opts?: Partial<GroupFieldStateOpts<T>>): GroupFieldState<T> {
-    const newValue = [] as unknown as T;
-    this.$eachField((field) => {
-      if (field.$state.$ignore) {
-        return;
-      }
-
-      newValue.push(field.$value);
-    });
-
-    const newChidrenState: ChildrenState = this.$megerChildState();
+    const newChidrenState: ChildrenState = this.$mergeChildState();
 
     return new GroupFieldState({
       raw: this.$children,
-      value: newChidrenState.$valid === ValidType.Valid ? newValue : this.$state.$value,
+      value: newValue,
       disabled: this.$state.$disabled,
       ignore: this.$state.$ignore,
       childrenState: newChidrenState,
@@ -133,32 +78,9 @@ export class FieldArray<T extends Array<any>> extends BaseField<T> {
   }
 
   @NonEnumerable
-  $onChange(raw: FieldArrayChildrenType<T>): void {
-    if (this.$state.$disabled) {
-      return;
-    }
-    if (raw !== this.$raw) {
-      debug('[FieldArray] change');
-      this.$children = raw;
-      this.$eachField((field) => {
-        // @ts-ignore
-        field.$parent = this;
-      });
-      this.$pushValidators('change');
-      this.$setState(this.$mergeState());
-      this.$markDirty();
-    }
-  }
-
-  @NonEnumerable
   $eachField(callback: EachFieldCallback<T[number]>) {
     this.$children.forEach((field, index) => {
       callback(field, index);
     });
-  }
-
-  @NonEnumerable
-  $rebuildState() {
-    this.$setState(this.$mergeState());
   }
 }

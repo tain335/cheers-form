@@ -103,13 +103,13 @@ class ValidateTaskExecutor {
       }
     }
 
-    const penddings: Promise<void>[] = [];
+    const pendings: Promise<void>[] = [];
     for (const task of fieldTasks) {
       const pending = this.doTask(task);
-      penddings.push(pending);
+      pendings.push(pending);
     }
     // field的校验可以并发校验
-    await Promise.all(penddings);
+    await Promise.all(pendings);
 
     for (const task of groupTasks) {
       await this.doTask(task);

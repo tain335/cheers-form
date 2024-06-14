@@ -13,6 +13,7 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
     if (this.$parent) {
       this.$parent.$waitForExecutorDone();
     }
+    this.$executor.schedule([]);
     return new Promise((resolve) => {
       this.$executor.onceDone(() => {
         resolve();
@@ -22,21 +23,36 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
 
   @NonEnumerable
   $markDirty() {
+    this.$dirty = true;
     if (this.$parent) {
       this.$parent.$markDirty();
     } else {
       const dirtyFields: BaseField<unknown>[] = [];
       const traverse = (field: BaseField<unknown>) => {
-        field.$eachField((f) => {
-          if (f.$dirty) {
-            traverse(f);
-            dirtyFields.push(f);
+        if (field.$dirty) {
+          field.$eachField((f) => {
+            if (f.$dirty) {
+              traverse(f);
+              if (f.$pendingEffects.length) {
+                dirtyFields.push(f);
+              }
+            } else {
+              f.$dirty = false;
+            }
+            return true;
+          });
+          if (field.$pendingEffects.length) {
+            dirtyFields.push(field);
+          } else {
+            field.$dirty = false;
           }
-        });
+        }
       };
       traverse(this as BaseField<unknown>);
       debug(`[Form] receive dirty fields count: ${dirtyFields.length}`);
-      this.$executor.schedule(dirtyFields);
+      if (dirtyFields.length) {
+        this.$executor.schedule(dirtyFields);
+      }
     }
   }
 }
