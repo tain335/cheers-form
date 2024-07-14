@@ -1,6 +1,5 @@
 import { Field } from './field';
 import { FieldArray } from './field_array';
-import { FieldGroup } from './field_group';
 import { ValidType } from './field_state';
 import { Form } from './form';
 import { Validator } from './validator';
@@ -188,4 +187,36 @@ test('[form] nest form validate at first time', (done) => {
   });
 });
 
-test('[form] ignore field', (done) => {});
+type IgnoreModel = {
+  name: string;
+  age: number;
+  address: string;
+};
+
+test('[form] ignore field', (done) => {
+  const form = new Form<IgnoreModel>({
+    name: new Field(''),
+    age: new Field<number>(undefined, {
+      valid: ValidType.Unknown,
+      validators: [
+        new Validator({
+          async validate(field, updateState) {
+            if (!field.$raw) {
+              updateState(field, { valid: ValidType.Invalid, message: 'age required' });
+            }
+          },
+        }),
+      ],
+    }),
+    address: new Field(''),
+  });
+  form.$onValidate().then(() => {
+    expect(form.age.$valid).toBe(ValidType.Invalid);
+    expect(form.$valid).toBe(ValidType.Invalid);
+    form.age.$ignore = true;
+    form.$onValidate().then(() => {
+      expect(form.$valid).toBe(ValidType.Valid);
+      done();
+    });
+  });
+});

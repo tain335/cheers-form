@@ -1,5 +1,5 @@
 export function debug(...msgs: any[]) {
-  console.debug(...msgs);
+  // console.debug(...msgs);
 }
 
 export function info(...msgs: any[]) {

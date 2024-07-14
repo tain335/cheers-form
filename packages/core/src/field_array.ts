@@ -1,9 +1,9 @@
 import { NonEnumerable } from './decorator';
 import { ValidType } from './field_state';
 import { BaseField, BaseFieldOpts, EachFieldCallback, Field, IDENTITY } from './field';
-import { ChildrenState, GroupFieldState, FieldGroupStateOpts, ToFields } from './field_group';
-import { debug } from './log';
-import { FieldCompose } from './field_compose';
+import { FieldCompose, FieldComposeOpts, FieldComposeState } from './field_compose';
+import { ToFields } from './types';
+import { ChildrenState } from './child_state';
 
 // 这里要omit receive 和 transform
 export type FieldArrayOpts<T> = Omit<BaseFieldOpts<T>, 'receive' | 'transform'>;
@@ -13,18 +13,21 @@ export type FieldArrayChildrenType<T extends Array<any>> = Array<ToFields<T[numb
 export interface FieldArray<T extends Array<any>> extends FieldArrayChildrenType<T> {}
 
 export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArrayChildrenType<T>> {
+  @NonEnumerable
+  private $initialChildren: FieldArrayChildrenType<T>;
+
+  @NonEnumerable
+  private $initialValid: ValidType;
+
   constructor(children: FieldArrayChildrenType<T>, opts?: FieldArrayOpts<T>) {
     const value = children.map((c) => c.$state.$value) as T;
-    super(value, children, {
+    const raw = children.map((c) => c.$state.$raw);
+    super(value, raw, children, {
       ...opts,
       transform: (raw: FieldArrayChildrenType<T>) =>
         raw.map((c: FieldArrayChildrenType<T>[number]) => c.$state.$value) as T,
     });
     this.$children = children;
-    this.$children.forEach((child) => {
-      // @ts-ignore
-      child.$parent = this;
-    });
     const proxy = new Proxy(this, {
       get(target, p) {
         if (p === IDENTITY) {
@@ -35,9 +38,23 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
         }
         return target[p as any];
       },
-      set(target, p, newValue) {
-        if (typeof p === 'number') {
-          target.$children[p] = newValue;
+      set(target, p, newValue, receiver) {
+        if (!Number.isNaN(Number(p))) {
+          let modified = false;
+          if (target.$children[Number(p)] !== newValue) {
+            if (newValue instanceof BaseField) {
+              newValue.$parent = proxy as any;
+            }
+            modified = true;
+          }
+          if (modified) {
+            const copyChildren = target.$children.slice();
+            copyChildren[Number(p)] = newValue;
+            target.$children = copyChildren;
+            proxy.$rebuildState(true);
+          } else {
+            target.$children[Number(p)] = newValue;
+          }
         } else if (p in []) {
           target.$children[p as any] = newValue;
         } else {
@@ -45,33 +62,52 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
         }
         return true;
       },
+      deleteProperty(target, p) {
+        if (!Number.isNaN(Number(p))) {
+          const deleteValue = target.$children[Number(p)];
+          if (deleteValue instanceof BaseField) {
+            deleteValue.$parent = undefined;
+          }
+          proxy.$rebuildState(true);
+        }
+        const copyChildren = target.$children.slice();
+        const result = Reflect.deleteProperty(copyChildren, p);
+        target.$children = copyChildren;
+        return result;
+      },
+    });
+    this.$children.forEach((child) => {
+      child.$parent = proxy as any;
     });
     proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    this.$initialChildren = this.$children;
+    this.$initialValid = opts?.valid ?? ValidType.Valid;
     return proxy;
   }
 
   @NonEnumerable
-  $mergeState(opts?: Partial<FieldGroupStateOpts<T>>): GroupFieldState<T> {
-    let newValue = [] as unknown as T;
-    if (!opts?.value) {
-      this.$eachField((field) => {
-        if (field.$state.$ignore) {
-          return true;
-        }
-        newValue.push(field.$value);
+  $mergeState(rawChanged: boolean, opts?: Partial<FieldComposeOpts<T>>): FieldComposeState<T> {
+    const newValue = [] as unknown as T;
+    let newRaw: any[] = [];
+    this.$eachField((field) => {
+      if (field.$state.$ignore) {
         return true;
-      });
-    } else {
-      newValue = opts.value;
+      }
+      newValue.push(field.$value);
+      newRaw.push(field.$raw);
+      return true;
+    });
+    if (!rawChanged) {
+      newRaw = this.$state.$childrenState.$raw;
     }
+    const newChidrenState: ChildrenState = this.$mergeChildState(newRaw);
 
-    const newChidrenState: ChildrenState = this.$mergeChildState();
-
-    return new GroupFieldState({
+    return new FieldComposeState({
       raw: this.$children,
       value: newValue,
       disabled: this.$state.$disabled,
       ignore: this.$state.$ignore,
+      required: this.$state.$required,
       childrenState: newChidrenState,
       ...opts,
     });
@@ -82,5 +118,17 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
     this.$children.forEach((field, index) => {
       callback(field, index);
     });
+  }
+
+  @NonEnumerable
+  $onReset(): void {
+    this.$children = this.$initialChildren;
+    this.$resetState();
+    this.$eachField((field) => {
+      field.$onReset();
+      return true;
+    });
+    this.$initEffectsState(this.$initialValid);
+    this.$rebuildState(true);
   }
 }

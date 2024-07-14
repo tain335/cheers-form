@@ -1,12 +1,17 @@
-import { unionBy } from 'lodash';
+import { flatten, isBoolean, isFunction, unionBy } from 'lodash';
+import mitt from 'mitt';
 import { NonEnumerable } from './decorator';
 import { Effect, EffectType, getEffect } from './effect';
 import { FieldState, FieldStateOpts, ValidType } from './field_state';
 import { genId } from './id';
-import { ValidateFieldState, Validator } from './validator';
+import { Validator, ValidatorCompose } from './validator';
 import { FieldGroup } from './field_group';
 import { FieldArray } from './field_array';
 import { debug } from './log';
+import { EffectExecutor } from './executor';
+import { Extract, ToFields, ToOmitParentFields } from './types';
+import { isDependenciesEqual } from './utils';
+import { FieldComposeState } from './field_compose';
 
 export const IDENTITY = Symbol('proxy_target_identity');
 
@@ -15,17 +20,29 @@ export type ReceiveCallback<T> = (v: T | undefined, initial: boolean) => any;
 export type TransformCallback<T> = (v: any) => T;
 
 export type BaseFieldOpts<T> = {
+  // 用于某些字段等待初始化才可以校验，例如异步加载的下拉选项
+  lazyToValidate?: boolean | ((field: ToFields<T>) => boolean);
   disabled?: boolean;
+  // 用于处理表单某些部分不参与校验，例如分步表单
   ignore?: boolean;
+  required?: boolean;
+  // 初始化的校验状态，默认Valid
   valid?: ValidType;
   validators?: Validator<T>[];
+  // 用于value->raw
   receive?: ReceiveCallback<T>;
+  // 用于raw->value, 只有通过自身校验的值才会转换
   transform?: TransformCallback<T>;
+};
+
+export type EffectSource = {
+  state: EffectState;
+  field: BaseField<unknown>;
 };
 
 export type EachFieldCallback<T> = (field: BaseField<T>, keyOrIndex?: string | number) => boolean;
 
-type EffectState = {
+export type EffectState = {
   valid: ValidType;
   error?: Error;
   message?: string;
@@ -40,21 +57,21 @@ export function isSameEffectState(older: EffectState, newer: EffectState) {
   return older.valid === newer.valid && older.error === newer.error && older.message === newer.message;
 }
 
-export function isDependenciesEqual(newDependencies: any[], oldDependencies: any[]) {
-  if (newDependencies === oldDependencies) {
-    return true;
-  }
-  if (newDependencies.length !== oldDependencies.length) {
-    return false;
-  }
-  for (let i = 0; i < newDependencies.length; i++) {
-    if (newDependencies[i] !== oldDependencies[i]) {
-      return false;
-    }
-  }
-  return true;
-}
+// TODO 暴露更多的状态和阶段
+type EmitterType<T extends BaseField<any>> = {
+  update: void;
+  // TODO
+  // beforeSelfValidate: void;
+  // afterSelfValidate: void;
+  beforeValidate: Validator<unknown>;
+  afterValidate: Validator<unknown>;
+};
 
+// field 关注的是$raw, 对外就是$raw + self valid
+// field_group 关注的是子field的$raw和它自身校验的结果也就是childState
+// field_group 需要一个childState，包含子field $raw的集合和自身校验的集合
+// field_group 对外就是$raw + childState + self valid
+// reset需要重置modified/manualModified/readyToValidate?
 export class BaseField<T> {
   @NonEnumerable
   $id = genId();
@@ -72,11 +89,27 @@ export class BaseField<T> {
   $dirty = false;
 
   @NonEnumerable
+  $modified = false;
+
+  @NonEnumerable
+  $manualModified = false;
+
+  @NonEnumerable
   $pendingEffects: PendingEffect<BaseField<T>>[] = [];
 
   @NonEnumerable
   $effectState: WeakMap<any, EffectState> = new WeakMap();
 
+  @NonEnumerable
+  $emitter = mitt<EmitterType<BaseField<T>>>();
+
+  @NonEnumerable
+  $lazyToValidate: boolean | ((field: any) => boolean) = false;
+
+  @NonEnumerable
+  $readyToValidate = false;
+
+  @NonEnumerable
   get $value(): T | undefined {
     return this.$state.$value;
   }
@@ -86,14 +119,50 @@ export class BaseField<T> {
     this.$raw = newRaw;
   }
 
+  @NonEnumerable
   get $raw() {
     return this.$state.$raw;
   }
 
-  set $raw(value) {
-    this.$onChange(value);
+  set $raw(raw) {
+    this.$onChange(raw);
   }
 
+  @NonEnumerable
+  get $ignore() {
+    return this.$state.$ignore;
+  }
+
+  set $ignore(ignore: boolean) {
+    this.$setState(this.$mergeState(false, { ignore }));
+    this.$pushValidators('change');
+    this.$rebuildState(true);
+  }
+
+  @NonEnumerable
+  get $disabled() {
+    return this.$state.$disabled;
+  }
+
+  set $disabled(disabled: boolean) {
+    this.$setState(this.$mergeState(false, { disabled }));
+    this.$pushValidators('change');
+    this.$rebuildState(false);
+  }
+
+  @NonEnumerable
+  get $required() {
+    return this.$state.$required;
+  }
+
+  set $required(required: boolean) {
+    this.$setState(this.$mergeState(false, { required }));
+    this.$pushValidators('change');
+    this.$rebuildState(false);
+  }
+
+  // 获取总的校验状态
+  @NonEnumerable
   get $valid(): ValidType {
     const state = this.$firstNotValidEffectState();
     if (state) {
@@ -102,10 +171,27 @@ export class BaseField<T> {
     return ValidType.Valid;
   }
 
+  // 获取自身的校验器的校验状体
+  @NonEnumerable
+  get $selfValid() {
+    const state = this.$firstNotValidEffectState(true);
+    if (!state) {
+      return ValidType.Valid;
+    }
+    return state.valid;
+  }
+
+  @NonEnumerable
   get $pass() {
     return this.$valid === ValidType.Valid;
   }
 
+  @NonEnumerable
+  get $selfPass() {
+    return this.$selfValid === ValidType.Valid;
+  }
+
+  @NonEnumerable
   get $message(): string {
     const state = this.$firstNotValidEffectState();
     if (state) {
@@ -114,21 +200,13 @@ export class BaseField<T> {
     return '';
   }
 
+  @NonEnumerable
   get $error(): any {
     const state = this.$firstNotValidEffectState();
     if (state) {
       return state.error;
     }
     return null;
-  }
-
-  get $allEffectState(): EffectState[] {
-    const effects = this.$getEffects();
-    return effects.map((effect) => this.$effectState.get(effect)).filter(Boolean) as EffectState[];
-  }
-
-  get $selfPass() {
-    return this.$selfValid === ValidType.Valid;
   }
 
   @NonEnumerable
@@ -141,11 +219,13 @@ export class BaseField<T> {
     const receive = opts?.receive ?? ((v) => v);
     this.$receive = receive;
     this.$transform = opts?.transform ?? ((v: any) => v);
+
     this.$state = new FieldState({
       value,
       raw: receive(value, true),
       disabled: opts?.disabled ?? false,
       ignore: opts?.ignore ?? false,
+      required: opts?.required ?? false,
     });
     this.$validators = opts?.validators ?? [];
   }
@@ -169,12 +249,9 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  get $selfValid() {
-    const state = this.$firstNotValidEffectState(true);
-    if (!state) {
-      return ValidType.Valid;
-    }
-    return state.valid;
+  $getEffectSources(effect: Effect<BaseField<unknown>>): EffectSource[] {
+    const state = this.$effectState.get(effect);
+    return state ? [{ state, field: this as BaseField<unknown> }] : [];
   }
 
   @NonEnumerable
@@ -190,28 +267,16 @@ export class BaseField<T> {
   $getSelfEffects() {
     let effects: Effect<BaseField<unknown>>[] = [];
     if (this.$validators.length) {
-      const validateEffects = this.$validators
-        .map((validator) => {
-          return getEffect([this.$self(), validator], () => ({
-            id: `${this.$id}-${validator.id}`,
-            type: EffectType.Validate,
-            fields: [],
-            force: 0,
-            watch: (field) => {
-              if (validator.$watch) {
-                return validator.$watch(field as unknown as ValidateFieldState<Partial<T>>);
-              }
-              return [field.$state.$raw];
-              // 如果是field是监听$raw 如果是其他监听 $value
-              // return this instanceof Field ? [field.$state.$raw] : [field.$state.$value];
-            },
-            async apply(field, updateField) {
-              debug('[Field] apply effect');
-              return validator.$doValidate(field as unknown as ValidateFieldState<Partial<T>>, updateField);
-            },
-          }));
-        })
-        .filter(Boolean);
+      const validateEffects = flatten(
+        this.$validators.map((validator) => {
+          if (validator instanceof ValidatorCompose) {
+            return validator.$validators.map((subValidator) =>
+              getEffect([this.$self(), subValidator], () => subValidator.createEffect(this)),
+            );
+          }
+          return [getEffect([this.$self(), validator], () => validator.createEffect(this))];
+        }),
+      ).filter(Boolean);
       effects = effects.concat(validateEffects as Effect<BaseField<unknown>>[]);
     }
     return effects;
@@ -235,7 +300,7 @@ export class BaseField<T> {
       if (state && state.valid === ValidType.Invalid) {
         return state;
       }
-      if (state && state.valid === ValidType.Unknown) {
+      if (!firstUnknownState && state && state.valid === ValidType.Unknown) {
         firstUnknownState = state;
       }
     }
@@ -262,21 +327,38 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  $waitForExecutorDone(): Promise<void> {
+  $rootExecutor(): EffectExecutor | null {
     if (this.$parent) {
-      return this.$parent.$waitForExecutorDone();
+      return this.$parent.$rootExecutor();
+    }
+    return null;
+  }
+
+  @NonEnumerable
+  $waitForExecutorDone(): Promise<void> {
+    const executor = this.$rootExecutor();
+    if (executor) {
+      executor.schedule();
+      return new Promise((resolve) => {
+        const doneCallback = () => {
+          executor.emitter.off('done', doneCallback);
+          resolve();
+        };
+        executor.emitter.on('done', doneCallback);
+      });
     }
     return Promise.resolve();
   }
 
   @NonEnumerable
-  $mergeState(opts?: Partial<FieldStateOpts<T>>): FieldState<T> {
+  $mergeState(rawChanged: boolean, opts?: Partial<FieldStateOpts<T>>): FieldState<T> {
     const valid = this.$selfValid;
     return new FieldState({
       value: valid === ValidType.Valid ? this.$transform(opts?.raw ?? this.$raw) : this.$value,
       disabled: this.$state.$disabled,
       ignore: this.$state.$ignore,
       raw: this.$state.$raw,
+      required: this.$state.$required,
       ...opts,
     });
   }
@@ -288,14 +370,30 @@ export class BaseField<T> {
     debug('[Field] this.$pendingEffects.length: ', this.$pendingEffects.length);
   }
 
+  // TODO change effects
   @NonEnumerable
   $pushValidators(trigger: 'change' | 'blur' | 'any' | 'all', force?: boolean) {
+    if (this.$lazyToValidate) {
+      if (!this.$readyToValidate) {
+        if (isBoolean(this.$lazyToValidate)) {
+          this.$readyToValidate = true;
+        } else if (isFunction(this.$lazyToValidate)) {
+          const ready = this.$lazyToValidate(this);
+          if (ready) {
+            this.$readyToValidate = ready;
+          }
+        } else {
+          throw new Error('not support lazyToValidate type');
+        }
+        return false;
+      }
+    }
     const validators = this.$validators.filter((validator) => {
-      if (validator.trigger === 'any' || trigger === 'all') {
+      if (validator.$trigger === 'any' || trigger === 'all') {
         return true;
       }
       if (trigger) {
-        return validator.trigger === trigger;
+        return validator.$trigger === trigger;
       }
       return true;
     });
@@ -307,7 +405,8 @@ export class BaseField<T> {
       if (force || !isDependenciesEqual(newDeps, effect.deps ?? [])) {
         pushed++;
         effect.deps = newDeps;
-        effect.fields.push(this as BaseField<unknown>);
+        effect.affectedFields.push(this as BaseField<unknown>);
+        // reset effect
         this.$updateEffectState(effect as Effect<BaseField<unknown>>, { valid: ValidType.Unknown, message: '' });
         this.$pushPendingEffect({ effect, deps: effect.deps ?? [] });
       }
@@ -319,21 +418,32 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
+  $change(raw: any, manual = false) {
+    if (raw !== this.$raw) {
+      this.$modified = true;
+      if (manual) {
+        this.$manualModified = true;
+      }
+      this.$setState(this.$mergeState(true, { raw }));
+      this.$pushValidators('change');
+      this.$rebuildState(true);
+    }
+  }
+
+  @NonEnumerable
   $onChange(raw: any) {
     if (this.$state.$disabled) {
       return;
     }
-    if (raw !== this.$raw) {
-      this.$setState(this.$mergeState({ raw }));
-      this.$pushValidators('change');
-      this.$rebuildState();
-    }
+    this.$change(raw, true);
   }
 
-  // 需要校验自身？
   @NonEnumerable
   $onValidate() {
+    // 需不需要更新状态？
+    this.$setState(this.$mergeState(false));
     this.$pushValidators('all', true);
+    this.$rebuildState(false);
     return this.$waitForExecutorDone().then(() => ({
       $valid: this.$valid,
       $selfValid: this.$selfValid,
@@ -349,26 +459,77 @@ export class BaseField<T> {
   @NonEnumerable
   $setState(state: FieldState<T>) {
     this.$state = state;
+    Promise.resolve().then(() => {
+      this.$emitter.emit('update');
+    });
   }
 
   @NonEnumerable
   $eachField(callback: EachFieldCallback<T>) {}
 
   @NonEnumerable
-  $rebuildState() {
+  $rebuildState(rawChanged: boolean) {
     if (this.$parent) {
-      this.$parent.$rebuildState();
+      this.$parent.$rebuildState(rawChanged);
     }
   }
+
+  @NonEnumerable
+  $isInProgress() {
+    return this.$rootExecutor()?.isFieldInProgress(this as BaseField<unknown>) ?? false;
+  }
+
+  @NonEnumerable
+  $isValidatorInProgress(validator: Validator<BaseField<unknown>>) {
+    const effect = getEffect([this.$self(), validator]);
+    if (effect) {
+      return this.$rootExecutor()?.isEffectInProgress(effect);
+    }
+    return false;
+  }
+
+  @NonEnumerable
+  $resetState() {
+    this.$effectState = new WeakMap();
+  }
+
+  @NonEnumerable
+  $onReset() {}
 }
 
 type FieldOpts<T> = BaseFieldOpts<T>;
 
-type Extract<T> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T;
+export class $Field<T> extends BaseField<Extract<T>> {
+  @NonEnumerable
+  private $initialValue: any;
 
-export class Field<T> extends BaseField<Extract<T>> {
+  @NonEnumerable
+  private $initialValid: ValidType;
+
   constructor(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) {
     super(value, opts);
     this.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    this.$initialValue = value;
+    this.$initialValid = opts?.valid ?? ValidType.Valid;
+  }
+
+  @NonEnumerable
+  $onReset(): void {
+    this.$value = this.$initialValue;
+    this.$resetState();
+    this.$initEffectsState(this.$initialValid);
+    this.$rebuildState(true);
   }
 }
+
+function Factory<T>(): new <T>(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) => $Field<Extract<T>> {
+  return class {
+    constructor(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) {
+      return new $Field(value, opts);
+    }
+  } as any;
+}
+
+export type Field<T> = $Field<T>;
+
+export const Field = Factory();

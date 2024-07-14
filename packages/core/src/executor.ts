@@ -1,11 +1,14 @@
-import { remove, uniqBy } from 'lodash';
+import { flatten, includes, remove, uniqBy } from 'lodash';
+import mitt from 'mitt';
 import { FieldStateOpts, ValidType } from './field_state';
-import { BaseField, PendingEffect, isDependenciesEqual } from './field';
+import { BaseField, PendingEffect } from './field';
 import { Effect, EffectType } from './effect';
 import { debug } from './log';
+import { isDependenciesEqual } from './utils';
+import { OmitParent } from './types';
 
 export type UpdateFieldStateCallback = (
-  targetField: BaseField<any>,
+  targetField: OmitParent<BaseField<any>>,
   newState: Partial<
     Omit<FieldStateOpts<BaseField<unknown>>, 'raw' | 'value'> & {
       valid?: ValidType;
@@ -22,51 +25,70 @@ function requestIdleCallbackPolyfill(
   return setTimeout(callback, 64);
 }
 
-type DoneListener = () => void;
-
-type RemoveDoneCallback = () => void;
-
 type EffectTask = {
   field: BaseField<unknown>;
   pendingsEffects: PendingEffect<BaseField<unknown>>[];
 };
 
+// 从单个处理批次上，每次都会把所有dirty field的pendingEffects清理完
+// 每个effect处理的最后都检查field的pendingEffects为空才移除
+// 为什么需要一个executor就是因为effect需要分成两个阶段，change和vadliate
+// change的阶段用于处理字段的联动，这个阶段会影响值；而validate仅用于校验一般不会出现值的改变
+// 为什么需要从头遍历form，就是因为一般需要保持校验的顺序，子字段的校验先执行，父字段的校验后执行；
+// 但是这里会出现子字段如果是异步，父字段校验是同步就会出现问题
 export class EffectExecutor {
   scheduled = false;
 
   inProgressEffectCount = 0;
 
-  queue: BaseField<unknown>[] = [];
+  inProgressFields: Set<BaseField<unknown>> = new Set();
 
-  listeners: DoneListener[] = [];
+  effects: WeakMap<Effect<BaseField<unknown>>, number> = new WeakMap();
 
-  onceDone(listener: DoneListener) {
-    const del = this.onDone(() => {
-      listener();
-      del();
+  schduledResolvers: (() => BaseField<unknown>[])[] = [];
+
+  emitter = mitt<{ done: void }>();
+
+  isDone() {
+    return this.inProgressEffectCount === 0 && this.inProgressFields.size === 0 && !this.scheduled;
+  }
+
+  shouldDone() {
+    Array.from(this.inProgressFields.values()).forEach((field) => {
+      if (field.$pendingEffects.length === 0) {
+        field.$dirty = false;
+        this.inProgressFields.delete(field);
+      }
     });
+    // 可以认为已经完成校验
+    if (this.isDone()) {
+      debug('[Executor] done');
+      this.emitter.emit('done');
+    } else {
+      // 没有完成则继续触发下一轮
+      this.scheduleNextTick();
+    }
   }
 
-  onDone(listener: DoneListener): RemoveDoneCallback {
-    this.listeners.push(listener);
-    return () => {
-      remove(this.listeners, (item) => item === listener);
-    };
+  isEffectInProgress(effect: Effect<BaseField<unknown>>) {
+    return this.effects.get(effect);
   }
 
-  offDone(listener: DoneListener) {
-    remove(this.listeners, listener);
+  isFieldInProgress(field: BaseField<unknown>) {
+    return this.inProgressFields.has(field);
   }
 
-  private nextTick() {
+  private scheduleNextTick() {
     ('requestIdleCallback' in globalThis ? requestIdleCallback : requestIdleCallbackPolyfill)(
       () => {
+        const fields: BaseField<unknown>[] = [];
+        fields.push(...flatten(this.schduledResolvers.map((resolver) => resolver())));
         this.scheduled = false;
-        debug(`[Executor] start, queue length: ${this.queue.length}`);
-        if (this.queue.length) {
+
+        debug(`[Executor] start, fields length: ${fields.length}`);
+        if (fields.length) {
           const changeTasks: EffectTask[] = [];
           const validateTasks: EffectTask[] = [];
-          const fields = this.queue.slice();
           debug(`[Executor] fields length: ${fields.length}`);
           fields.forEach((field) => {
             const effects = remove(field.$pendingEffects, (effect) => {
@@ -85,7 +107,6 @@ export class EffectExecutor {
             this.execute(changeTasks);
           } else {
             fields.forEach((field) => {
-              // debug(field.$value);
               debug(`[Executor] field $pendingEffects length: ${field.$pendingEffects.length}`);
               const effects = remove(field.$pendingEffects, (effect) => {
                 return effect.effect.type === EffectType.Validate;
@@ -111,46 +132,40 @@ export class EffectExecutor {
     );
   }
 
-  isDone() {
-    return this.inProgressEffectCount === 0 && this.queue.length === 0 && !this.scheduled;
+  private markEffect(effect: Effect<BaseField<unknown>>) {
+    if (!this.effects.has(effect)) {
+      this.effects.set(effect, 1);
+    } else {
+      const count = this.effects.get(effect) as number;
+      this.effects.set(effect, count + 1);
+    }
   }
 
-  shouldDone() {
-    remove(this.queue, (field) => {
-      if (field.$pendingEffects.length === 0) {
-        field.$dirty = false;
-        return true;
-      }
-      return false;
-    });
-
-    // 可以认为已经完成校验
-    if (this.isDone()) {
-      debug('[Executor] done');
-      this.listeners.slice().forEach((listener) => {
-        listener();
-      });
-    }
+  private unmarkEffect(effect: Effect<BaseField<unknown>>) {
+    const count = this.effects.get(effect) as number;
+    this.effects.set(effect, count - 1);
   }
 
   private startEffect(effect: Effect<BaseField<unknown>>, field: BaseField<unknown>, deps: any[]) {
     debug('[Executor] start effect');
     this.inProgressEffectCount++;
-    debug('[Executor] effect fields length', effect.fields.length);
-    const beforeApplyFields = uniqBy(effect.fields, (item) => item.$id);
+    this.markEffect(effect);
+    debug('[Executor] effect fields length', effect.affectedFields.length);
+    const beforeApplyFields = uniqBy(effect.affectedFields, (item) => item);
     const afterApplyFields: BaseField<unknown>[] = [];
-    effect.fields = [];
-    const updateState: UpdateFieldStateCallback = (targetField, newState) => {
+    effect.affectedFields = [];
+    const updateField: UpdateFieldStateCallback = (targetField, newState) => {
       if (isDependenciesEqual(effect.watch(field), deps)) {
         const opts: FieldStateOpts<unknown> = {
           value: targetField.$state.$value,
           raw: targetField.$state.$raw,
           disabled: targetField.$state.$disabled,
           ignore: targetField.$state.$ignore,
+          required: targetField.$state.$required,
         };
         let effectUpdated = false;
         if ('valid' in newState) {
-          afterApplyFields.push(targetField);
+          afterApplyFields.push(targetField as BaseField<any>);
           effectUpdated = targetField.$updateEffectState(effect, {
             valid: newState.valid as ValidType,
             message: newState.message ?? '',
@@ -159,7 +174,7 @@ export class EffectExecutor {
         }
 
         if (effectUpdated) {
-          const newFieldState = targetField.$mergeState({
+          const newFieldState = targetField.$mergeState(false, {
             ...opts,
             ...newState,
           });
@@ -167,22 +182,25 @@ export class EffectExecutor {
             // Update Field
             targetField.$setState(newFieldState);
             targetField.$pushValidators('change');
-            if (targetField.$parent) {
-              targetField.$parent.$rebuildState();
-            }
+          }
+          // effect update 也要更新parent state
+          if ((targetField as BaseField<any>).$parent) {
+            (targetField as BaseField<any>).$parent?.$rebuildState(false);
           }
         }
         return true;
       }
       return false;
     };
+    effect.beforeApply?.();
     // TODO 应该根据effect的设置来决定是否重置effect状态
-    effect.apply(field, updateState).finally(() => {
+    effect.apply(field, updateField).finally(() => {
       this.completeEffect(
         effect,
         beforeApplyFields,
-        uniqBy(afterApplyFields, (item) => item.$id),
+        uniqBy(afterApplyFields, (item) => item),
       );
+      effect.afterApply?.();
     });
   }
 
@@ -192,22 +210,23 @@ export class EffectExecutor {
     afterApplyFields: BaseField<unknown>[],
   ) {
     this.inProgressEffectCount--;
+    this.unmarkEffect(effect);
     debug('[Executor] complete effect');
     afterApplyFields.forEach((field) => {
       remove(beforeApplyFields, field);
     });
 
     // 更新关联的field
-    effect.fields = afterApplyFields.slice();
+    effect.affectedFields = afterApplyFields.slice();
 
     beforeApplyFields.forEach((field) => {
       const updated = field.$updateEffectState(effect, { valid: ValidType.Valid });
       if (updated) {
         // 因为校验不会改变值，所以保持原样
-        field.$setState(field.$mergeState({}));
+        field.$setState(field.$mergeState(false));
         field.$pushValidators('change');
         if (field.$parent) {
-          field.$parent.$rebuildState();
+          field.$parent.$rebuildState(false);
         }
       }
     });
@@ -225,13 +244,14 @@ export class EffectExecutor {
     Promise.resolve().then(() => this.shouldDone());
   }
 
-  schedule(dirtyFields: BaseField<unknown>[]) {
-    this.queue.push(...dirtyFields);
-    this.queue = uniqBy(this.queue, (field) => field.$id);
+  registerResolver(dirtyFieldsResolver: () => BaseField<unknown>[]) {
+    this.schduledResolvers.push(dirtyFieldsResolver);
+  }
 
+  schedule() {
     if (!this.scheduled) {
       this.scheduled = true;
-      this.nextTick();
+      this.scheduleNextTick();
     }
   }
 }

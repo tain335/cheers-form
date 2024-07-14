@@ -1,6 +1,5 @@
 import { Field } from './field';
 import { FieldArray } from './field_array';
-import { FieldGroup } from './field_group';
 import { ValidType } from './field_state';
 import { Form } from './form';
 import { Validator } from './validator';
@@ -190,6 +189,57 @@ test('[form] with number 4', (done) => {
   form.input.$onChange('3');
   form.input.$waitForExecutorDone().then(() => {
     expect(form.input.$valid).toBe(ValidType.Valid);
+    form.input.$onChange('a');
+    form.$onValidate().then(() => {
+      expect(form.input.$valid).toBe(ValidType.Invalid);
+      done();
+    });
+  });
+});
+
+test('[form] with compose', (done) => {
+  const form = new Form<{ input: number }>(
+    {
+      input: new Field<number>(undefined, {
+        receive: (v) => (!v ? '' : String(v)),
+        transform: (v) => Number(v),
+        valid: ValidType.Unknown,
+        validators: [
+          new Validator({
+            trigger: 'change',
+            async validate(field, updateState) {
+              if (!field.$raw) {
+                updateState(field, { valid: ValidType.Invalid, message: 'input required' });
+              } else if (!/\d+/.test(field.$raw)) {
+                updateState(field, { valid: ValidType.Invalid, message: 'number input required' });
+              }
+            },
+          }),
+        ],
+      }),
+    },
+    {
+      validators: [
+        new Validator({
+          debounce: 3000,
+          watch(field) {
+            return [field.$childrenState];
+          },
+          async validate(field, updateState) {
+            if (field.input.$selfValid === ValidType.Valid) {
+              if (field.input.$value && field.input.$value > 0) {
+                updateState(field.input, { valid: ValidType.Invalid });
+              }
+            }
+          },
+        }),
+      ],
+    },
+  );
+  expect(form.$valid).toBe(ValidType.Unknown);
+  form.input.$onChange('3');
+  form.input.$waitForExecutorDone().then(() => {
+    expect(form.input.$valid).toBe(ValidType.Invalid);
     form.input.$onChange('a');
     form.$onValidate().then(() => {
       expect(form.input.$valid).toBe(ValidType.Invalid);

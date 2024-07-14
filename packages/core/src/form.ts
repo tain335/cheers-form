@@ -8,25 +8,9 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
   @NonEnumerable
   $executor = new EffectExecutor();
 
-  @NonEnumerable
-  $waitForExecutorDone(): Promise<void> {
-    if (this.$parent) {
-      this.$parent.$waitForExecutorDone();
-    }
-    this.$executor.schedule([]);
-    return new Promise((resolve) => {
-      this.$executor.onceDone(() => {
-        resolve();
-      });
-    });
-  }
-
-  @NonEnumerable
-  $markDirty() {
-    this.$dirty = true;
-    if (this.$parent) {
-      this.$parent.$markDirty();
-    } else {
+  constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
+    super(children, opts);
+    this.$executor.registerResolver(() => {
       const dirtyFields: BaseField<unknown>[] = [];
       const traverse = (field: BaseField<unknown>) => {
         if (field.$dirty) {
@@ -50,12 +34,30 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
       };
       traverse(this as BaseField<unknown>);
       debug(`[Form] receive dirty fields count: ${dirtyFields.length}`);
-      if (dirtyFields.length) {
-        this.$executor.schedule(dirtyFields);
-      }
+      return dirtyFields;
+    });
+  }
+
+  @NonEnumerable
+  $rootExecutor() {
+    if (!this.$parent) {
+      return this.$executor;
+    }
+    return this.$parent.$rootExecutor();
+  }
+
+  @NonEnumerable
+  $markDirty() {
+    this.$dirty = true;
+    if (this.$parent) {
+      this.$parent.$markDirty();
+    } else {
+      this.$executor.schedule();
     }
   }
 }
+
+export type FormType<T extends Record<string, any>> = FieldGroupChildrenType<T> & $FieldGroup<T>;
 
 function Wrapper<T extends Record<string, any>>(): new <T extends Record<string, any> = Record<string, unknown>>(
   children: FieldGroupChildrenType<T>,

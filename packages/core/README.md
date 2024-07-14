@@ -27,3 +27,7 @@ inputA增大，inputB增大为input A的大小
 这个时候异步应该当作一个普通的修改
 
 # effect需要一个owns字段来表明这个effects属于哪些字段？
+
+
+// Field添加syncField
+// Validator group使用parllel，field使用seq

@@ -10,19 +10,31 @@ export enum EffectType {
 export type Effect<T extends BaseField<any>> = {
   id: string;
   deps?: any[];
-  fields: BaseField<unknown>[];
+  affectedFields: BaseField<unknown>[];
   type: EffectType;
   watch: (field: T) => any[];
+  predict: (field: T) => boolean;
+  beforeApply?: () => void;
   apply: (field: T, updateField: UpdateFieldStateCallback) => Promise<void>;
+  afterApply?: () => void;
 };
 
-export function effect<T extends BaseField<any>>(action: Effect<T>['apply'], watch?: Effect<T>['watch']) {
+export function effect<T extends BaseField<any>>({
+  action,
+  watch,
+  predict,
+}: {
+  action: Effect<T>['apply'];
+  watch?: Effect<T>['watch'];
+  predict?: Effect<T>['predict'];
+}) {
   return {
     deps: [],
     fields: [],
     stage: EffectType.Change,
     watch,
     action,
+    predict,
   };
 }
 

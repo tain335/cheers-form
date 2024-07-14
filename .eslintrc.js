@@ -21,7 +21,7 @@ module.exports = {
   },
   parser: '@typescript-eslint/parser',
   parserOptions: {
-    project: './tsconfig.json',
+    project: ['./packages/*/tsconfig.json', './tsconfig.json']
   },
   plugins: ['react', 'import', 'prettier', '@typescript-eslint'],
   rules: {
@@ -59,6 +59,7 @@ module.exports = {
     "max-classes-per-file": 0,
     "no-constructor-return": 0,
     "@typescript-eslint/ban-ts-comment": 0,
+    "@typescript-eslint/no-this-alias": 0,
     "import/order": [2, {
       "pathGroups": [
         {

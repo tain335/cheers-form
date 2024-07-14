@@ -1,13 +1,9 @@
+import { ChildrenState } from './child_state';
 import { NonEnumerable } from './decorator';
-import { BaseField, BaseFieldOpts, EachFieldCallback, Field, IDENTITY } from './field';
-import { FieldArray } from './field_array';
-import { FieldCompose } from './field_compose';
+import { BaseField, BaseFieldOpts, EachFieldCallback, IDENTITY } from './field';
+import { FieldCompose, FieldComposeState, FieldComposeStateOpts } from './field_compose';
 import { FieldState, FieldStateOpts, ValidType } from './field_state';
-
-// union 分发的特性
-type ToField<T> = T extends boolean ? Field<boolean> : T extends any ? Field<T> : never;
-
-export type ToFields<T> = T extends Array<any> ? FieldArray<T> : T extends object ? FieldGroup<T> : ToField<T>;
+import { ToFields } from './types';
 
 export type FieldGroupOpts<T> = Omit<BaseFieldOpts<T>, 'receive' | 'transform'>;
 
@@ -15,34 +11,22 @@ export type FieldGroupChildrenType<T extends object> = {
   [K in Exclude<keyof T, undefined>]: ToFields<Exclude<T[K], undefined>>;
 };
 
-export type ChildrenState = {
-  $valid: ValidType;
-  $issueFields: BaseField<unknown>[];
-};
-
-export type FieldGroupStateOpts<T> = FieldStateOpts<T> & { childrenState: ChildrenState };
-
-export class GroupFieldState<T> extends FieldState<T> {
-  @NonEnumerable
-  $childrenState: ChildrenState;
-
-  constructor(opts: FieldGroupStateOpts<T>) {
-    super(opts);
-    this.$childrenState = opts.childrenState;
-  }
-
-  isEqual(newState: GroupFieldState<T>): boolean {
-    return this.$childrenState === newState.$childrenState && super.isEqual(newState);
-  }
-}
-
 export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChildrenType<T>> {
+  @NonEnumerable
+  private $initialChildren: FieldGroupChildrenType<T>;
+
+  @NonEnumerable
+  private $initialValid: ValidType;
+
   constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
-    const value = Object.keys(children).reduce((p: any, k) => {
-      p[k] = children[k as keyof typeof children].$value;
-      return p;
-    }, {} as T);
-    super(value, children, {
+    const value: any = {};
+    const raw: any = {};
+    Object.keys(children).forEach((k) => {
+      value[k] = children[k as keyof typeof children].$value;
+      raw[k] = children[k as keyof typeof children].$raw;
+      return value;
+    });
+    super(value, raw, children, {
       ...opts,
       transform: (raw: any) =>
         Object.keys(raw).reduce((p: any, k) => {
@@ -51,21 +35,33 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
         }, {} as T),
     });
     this.$children = children;
-    this.$state = new GroupFieldState({
+    this.$state = new FieldComposeState({
       value,
       raw: this.$children,
       disabled: opts?.disabled ?? false,
       ignore: opts?.ignore ?? false,
-      childrenState: this.$mergeChildState(),
+      required: opts?.required ?? false,
+      childrenState: this.$mergeChildState(raw),
     });
-    // set parent
-    Object.values(this.$children).forEach((child: any) => {
-      child.$parent = this;
-    });
+
     const proxy = new Proxy(this, {
-      set(target, p, newValue, receiver) {
+      set(target, p, newValue) {
+        let modified = false;
         if (p in target.$children) {
-          target.$children[p as Exclude<keyof T, undefined>] = newValue;
+          if (newValue !== target.$children[p as Exclude<keyof T, undefined>]) {
+            if (newValue instanceof BaseField) {
+              newValue.$parent = proxy as any;
+            }
+            modified = true;
+          }
+          if (modified) {
+            const copyChildren = { ...target.$children };
+            copyChildren[p as Exclude<keyof T, undefined>] = newValue;
+            target.$children = copyChildren;
+            proxy.$rebuildState(true);
+          } else {
+            target.$children[p as Exclude<keyof T, undefined>] = newValue;
+          }
         } else {
           // @ts-ignore
           target[p as keyof $FieldGroup<T>] = newValue;
@@ -81,26 +77,52 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
         }
         return target[p as keyof $FieldGroup<T>];
       },
+      deleteProperty(target, p) {
+        if (p in target.$children) {
+          const deleteValue = target.$children[p as Exclude<keyof T, undefined>];
+          if (deleteValue instanceof BaseField) {
+            deleteValue.$parent = undefined;
+          }
+          const copyChildren = { ...target.$children };
+          delete copyChildren[p as Exclude<keyof T, undefined>];
+          target.$children = copyChildren;
+          proxy.$rebuildState(true);
+          return true;
+        }
+        return false;
+      },
     });
+    Object.values(this.$children).forEach((child: any) => {
+      child.$parent = proxy;
+    });
+    this.$initialChildren = this.$children;
+    this.$initialValid = opts?.valid ?? ValidType.Valid;
     proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
     return proxy;
   }
 
   @NonEnumerable
-  $mergeState(opts?: Partial<FieldGroupStateOpts<T>>): GroupFieldState<T> {
+  $mergeState(rawChanged: boolean, opts?: Partial<FieldComposeStateOpts<T>>): FieldComposeState<T> {
     const newValue = {} as unknown as T;
+    let newRaw: any = {};
     this.$eachField((field, key) => {
       if (field.$state.$ignore) {
         return true;
       }
       newValue[key as keyof T] = field.$value;
+      newRaw[key as keyof T] = field.$raw;
       return true;
     });
-    const newChidrenState: ChildrenState = this.$mergeChildState();
-    return new GroupFieldState({
+    if (!rawChanged) {
+      newRaw = this.$state.$childrenState.$raw;
+    }
+
+    const newChidrenState: ChildrenState = this.$mergeChildState(newRaw);
+    return new FieldComposeState({
       raw: this.$children,
       value: newValue,
       disabled: this.$state.$disabled,
+      required: this.$state.$required,
       ignore: this.$state.$ignore,
       childrenState: newChidrenState,
       ...opts,
@@ -117,11 +139,23 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
       }
     }
   }
+
+  @NonEnumerable
+  $onReset(): void {
+    this.$children = this.$initialChildren;
+    this.$resetState();
+    this.$eachField((field) => {
+      field.$onReset();
+      return true;
+    });
+    this.$initEffectsState(this.$initialValid);
+    this.$rebuildState(true);
+  }
 }
 
 export type FieldGroup<T extends object> = FieldGroupChildrenType<T> & $FieldGroup<T>;
 
-function Wrapper<T extends object>(): new <T extends object = Record<string, unknown>>(
+function Factory<T extends object>(): new <T extends object = Record<string, unknown>>(
   children: FieldGroupChildrenType<T>,
   opts?: FieldGroupOpts<T>,
 ) => FieldGroupChildrenType<T> & $FieldGroup<T> {
@@ -132,4 +166,4 @@ function Wrapper<T extends object>(): new <T extends object = Record<string, unk
   } as any;
 }
 
-export const FieldGroup = Wrapper();
+export const FieldGroup = Factory();
