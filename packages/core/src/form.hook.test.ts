@@ -1,0 +1,3 @@
+test('hook', (done) => {
+  done();
+});

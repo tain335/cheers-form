@@ -13,12 +13,6 @@ export type FieldArrayChildrenType<T extends Array<any>> = Array<ToFields<T[numb
 export interface FieldArray<T extends Array<any>> extends FieldArrayChildrenType<T> {}
 
 export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArrayChildrenType<T>> {
-  @NonEnumerable
-  private $initialChildren: FieldArrayChildrenType<T>;
-
-  @NonEnumerable
-  private $initialValid: ValidType;
-
   constructor(children: FieldArrayChildrenType<T>, opts?: FieldArrayOpts<T>) {
     const value = children.map((c) => c.$state.$value) as T;
     const raw = children.map((c) => c.$state.$raw);
@@ -48,9 +42,7 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
             modified = true;
           }
           if (modified) {
-            const copyChildren = target.$children.slice();
-            copyChildren[Number(p)] = newValue;
-            target.$children = copyChildren;
+            target.$children[Number(p)] = newValue;
             proxy.$rebuildState(true);
           } else {
             target.$children[Number(p)] = newValue;
@@ -70,9 +62,7 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
           }
           proxy.$rebuildState(true);
         }
-        const copyChildren = target.$children.slice();
-        const result = Reflect.deleteProperty(copyChildren, p);
-        target.$children = copyChildren;
+        const result = Reflect.deleteProperty(target.$children, p);
         return result;
       },
     });
@@ -80,8 +70,10 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
       child.$parent = proxy as any;
     });
     proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
-    this.$initialChildren = this.$children;
-    this.$initialValid = opts?.valid ?? ValidType.Valid;
+    this.$initial = {
+      value: this.$children.slice(),
+      valid: opts?.valid ?? ValidType.Valid,
+    };
     return proxy;
   }
 
@@ -122,13 +114,13 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
 
   @NonEnumerable
   $onReset(): void {
-    this.$children = this.$initialChildren;
-    this.$resetState();
+    super.$onReset();
+    this.$children = this.$initial.value;
     this.$eachField((field) => {
       field.$onReset();
       return true;
     });
-    this.$initEffectsState(this.$initialValid);
-    this.$rebuildState(true);
+    this.$initEffectsState(this.$initial.valid);
+    this.$rebuildState(false);
   }
 }

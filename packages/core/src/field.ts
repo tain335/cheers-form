@@ -88,11 +88,12 @@ export class BaseField<T> {
   @NonEnumerable
   $dirty = false;
 
+  // 要不要往上冒泡修改，如果往上修改如何reset?
   @NonEnumerable
-  $modified = false;
+  $selfModified = false;
 
   @NonEnumerable
-  $manualModified = false;
+  $manualSelfModified = false;
 
   @NonEnumerable
   $pendingEffects: PendingEffect<BaseField<T>>[] = [];
@@ -108,6 +109,10 @@ export class BaseField<T> {
 
   @NonEnumerable
   $readyToValidate = false;
+
+  @NonEnumerable
+  // @ts-ignore
+  $initial: { value: any; valid: ValidType };
 
   @NonEnumerable
   get $value(): T | undefined {
@@ -159,6 +164,16 @@ export class BaseField<T> {
     this.$setState(this.$mergeState(false, { required }));
     this.$pushValidators('change');
     this.$rebuildState(false);
+  }
+
+  @NonEnumerable
+  get $modified() {
+    return this.$selfModified;
+  }
+
+  @NonEnumerable
+  get $manualModified() {
+    return this.$manualSelfModified;
   }
 
   // 获取总的校验状态
@@ -420,9 +435,9 @@ export class BaseField<T> {
   @NonEnumerable
   $change(raw: any, manual = false) {
     if (raw !== this.$raw) {
-      this.$modified = true;
+      this.$selfModified = true;
       if (manual) {
-        this.$manualModified = true;
+        this.$manualSelfModified = true;
       }
       this.$setState(this.$mergeState(true, { raw }));
       this.$pushValidators('change');
@@ -489,36 +504,32 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  $resetState() {
+  $onReset() {
     this.$effectState = new WeakMap();
+    this.$readyToValidate = false;
+    this.$manualSelfModified = false;
+    this.$selfModified = false;
   }
-
-  @NonEnumerable
-  $onReset() {}
 }
 
 type FieldOpts<T> = BaseFieldOpts<T>;
 
 export class $Field<T> extends BaseField<Extract<T>> {
-  @NonEnumerable
-  private $initialValue: any;
-
-  @NonEnumerable
-  private $initialValid: ValidType;
-
   constructor(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) {
     super(value, opts);
     this.$initEffectsState(opts?.valid ?? ValidType.Valid);
-    this.$initialValue = value;
-    this.$initialValid = opts?.valid ?? ValidType.Valid;
+    this.$initial = {
+      value,
+      valid: opts?.valid ?? ValidType.Valid,
+    };
   }
 
   @NonEnumerable
   $onReset(): void {
-    this.$value = this.$initialValue;
-    this.$resetState();
-    this.$initEffectsState(this.$initialValid);
-    this.$rebuildState(true);
+    super.$onReset();
+    this.$initEffectsState(this.$initial.valid);
+    this.$setState(this.$mergeState(true, { raw: this.$receive(this.$initial.value, false) }));
+    this.$rebuildState(false);
   }
 }
 

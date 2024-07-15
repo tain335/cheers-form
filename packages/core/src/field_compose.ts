@@ -72,6 +72,38 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
   }
 
   @NonEnumerable
+  get $modified() {
+    let modified = false;
+    this.$eachField((field) => {
+      if (field.$modified) {
+        modified = field.$modified;
+        return false;
+      }
+      return true;
+    });
+    if (modified) {
+      return true;
+    }
+    return this.$selfModified;
+  }
+
+  @NonEnumerable
+  get $manualModified() {
+    let manualModified = false;
+    this.$eachField((field) => {
+      if (field.$manualModified) {
+        manualModified = field.$manualModified;
+        return false;
+      }
+      return true;
+    });
+    if (manualModified) {
+      return true;
+    }
+    return this.$manualSelfModified;
+  }
+
+  @NonEnumerable
   $getEffectSources(effect: Effect<BaseField<unknown>>): EffectSource[] {
     const currentSources = super.$getEffectSources(effect);
     return currentSources.concat(this.$state.$childrenState.$effectSources.get(effect) ?? []);
@@ -174,9 +206,9 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
   @NonEnumerable
   $change(raw: ChildType, manual = false) {
     if (raw !== this.$raw) {
-      this.$modified = true;
+      this.$selfModified = true;
       if (manual) {
-        this.$manualModified = true;
+        this.$manualSelfModified = true;
       }
       this.$children = raw;
       this.$eachField((field) => {

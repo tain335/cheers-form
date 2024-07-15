@@ -35,7 +35,7 @@ type EffectTask = {
 // 为什么需要一个executor就是因为effect需要分成两个阶段，change和vadliate
 // change的阶段用于处理字段的联动，这个阶段会影响值；而validate仅用于校验一般不会出现值的改变
 // 为什么需要从头遍历form，就是因为一般需要保持校验的顺序，子字段的校验先执行，父字段的校验后执行；
-// 但是这里会出现子字段如果是异步，父字段校验是同步就会出现问题
+// 但是这里会出现子字段如果是异步，父字段校验是同步就会出现问题，或者加入等待children校验成功才进行
 export class EffectExecutor {
   scheduled = false;
 

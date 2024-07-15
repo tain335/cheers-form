@@ -8,7 +8,7 @@ type MultiNoDuplictNameModel = {
   names: string[];
 };
 
-test('[form] multi name no duplict', (done) => {
+test('[form] multi name no duplict', async () => {
   const form = new Form<MultiNoDuplictNameModel>({
     names: new FieldArray([], {
       validators: [
@@ -33,22 +33,19 @@ test('[form] multi name no duplict', (done) => {
   const fields = [new Field('nick'), new Field('nick2')];
   form.names.$onChange(fields);
   expect(form.$raw.names.length).toBe(2);
-  form.$waitForExecutorDone().then(() => {
-    expect(form.$valid).toBe(ValidType.Valid);
-    expect(form.names.$value).toEqual(['nick', 'nick2']);
-    form.names.$onChange([...fields, new Field('nick')]);
+  await form.$waitForExecutorDone();
+  await form.$waitForExecutorDone();
+  expect(form.$valid).toBe(ValidType.Valid);
+  expect(form.names.$value).toEqual(['nick', 'nick2']);
+  form.names.$onChange([...fields, new Field('nick')]);
 
-    expect(form.$raw.names.length).toBe(3);
-    expect(form.$valid).toBe(ValidType.Unknown);
-
-    form.$waitForExecutorDone().then(() => {
-      expect(form.$valid).toBe(ValidType.Invalid);
-      done();
-    });
-  });
+  expect(form.$raw.names.length).toBe(3);
+  expect(form.$valid).toBe(ValidType.Unknown);
+  await form.$waitForExecutorDone();
+  expect(form.$valid).toBe(ValidType.Invalid);
 });
 
-test('[form] multi name no duplict and remove', (done) => {
+test('[form] multi name no duplict and remove', async () => {
   const form = new Form<MultiNoDuplictNameModel>({
     names: new FieldArray([], {
       validators: [
@@ -73,27 +70,22 @@ test('[form] multi name no duplict and remove', (done) => {
   const fields = [new Field('nick'), new Field('nick2')];
   form.names.$onChange(fields);
   expect(form.$selfValid).toBe(ValidType.Unknown);
-  form.$waitForExecutorDone().then(() => {
-    expect(form.$valid).toBe(ValidType.Valid);
-    expect(form.names.$value).toEqual(['nick', 'nick2']);
-    const duplictField = new Field('nick');
-    form.names.$onChange([...fields, duplictField]);
+  await form.$waitForExecutorDone();
+  expect(form.$valid).toBe(ValidType.Valid);
+  expect(form.names.$value).toEqual(['nick', 'nick2']);
+  const duplictField = new Field('nick');
+  form.names.$onChange([...fields, duplictField]);
 
-    expect(form.$raw.names.length).toBe(3);
-    expect(form.$valid).toBe(ValidType.Unknown);
-
-    form.$waitForExecutorDone().then(() => {
-      expect(form.$valid).toBe(ValidType.Invalid);
-      form.names.$onChange(fields.slice(1).concat([duplictField]));
-      form.$waitForExecutorDone().then(() => {
-        expect(form.$valid).toBe(ValidType.Valid);
-        done();
-      });
-    });
-  });
+  expect(form.$raw.names.length).toBe(3);
+  expect(form.$valid).toBe(ValidType.Unknown);
+  await form.$waitForExecutorDone();
+  expect(form.$valid).toBe(ValidType.Invalid);
+  form.names.$onChange(fields.slice(1).concat([duplictField]));
+  await form.$waitForExecutorDone();
+  expect(form.$valid).toBe(ValidType.Valid);
 });
 
-test('[form] nest form', (done) => {
+test('[form] nest form', async () => {
   const courseForm = new Form<{ courses: string[] }>({
     courses: new FieldArray([], {
       validators: [
@@ -130,20 +122,17 @@ test('[form] nest form', (done) => {
     myCourses: courseForm,
   });
   studentForm.myCourses.courses.$onChange([new Field('YuWen'), new Field('ShuXue')]);
-  studentForm.$waitForExecutorDone().then(() => {
-    expect(studentForm.$valid).toBe(ValidType.Invalid);
-    studentForm.name.$onChange('Bob');
-    expect(studentForm.name.$selfValid).toBe(ValidType.Unknown);
-    expect(studentForm.name.$valid).toBe(ValidType.Unknown);
-    studentForm.$waitForExecutorDone().then(() => {
-      expect(studentForm.$valid).toBe(ValidType.Valid);
-      expect(studentForm.$value).toEqual({ name: 'Bob', myCourses: { courses: ['YuWen', 'ShuXue'] } });
-      done();
-    });
-  });
+  await studentForm.$waitForExecutorDone();
+  expect(studentForm.$valid).toBe(ValidType.Invalid);
+  studentForm.name.$onChange('Bob');
+  expect(studentForm.name.$selfValid).toBe(ValidType.Unknown);
+  expect(studentForm.name.$valid).toBe(ValidType.Unknown);
+  await studentForm.$waitForExecutorDone();
+  expect(studentForm.$valid).toBe(ValidType.Valid);
+  expect(studentForm.$value).toEqual({ name: 'Bob', myCourses: { courses: ['YuWen', 'ShuXue'] } });
 });
 
-test('[form] nest form validate at first time', (done) => {
+test('[form] nest form validate at first time', async () => {
   const courseForm = new Form<{ courses: string[] }>({
     courses: new FieldArray([new Field('YuWen'), new Field('ShuXue')], {
       valid: ValidType.Unknown,
@@ -180,11 +169,9 @@ test('[form] nest form validate at first time', (done) => {
     }),
     myCourses: courseForm,
   });
-  studentForm.$onValidate().then((state) => {
-    expect(state.$valid).toBe(ValidType.Invalid);
-    expect(studentForm.name.$valid).toBe(ValidType.Invalid);
-    done();
-  });
+  const state = await studentForm.$onValidate();
+  expect(state.$valid).toBe(ValidType.Invalid);
+  expect(studentForm.name.$valid).toBe(ValidType.Invalid);
 });
 
 type IgnoreModel = {
@@ -193,7 +180,7 @@ type IgnoreModel = {
   address: string;
 };
 
-test('[form] ignore field', (done) => {
+test('[form] ignore field', async () => {
   const form = new Form<IgnoreModel>({
     name: new Field(''),
     age: new Field<number>(undefined, {
@@ -210,13 +197,10 @@ test('[form] ignore field', (done) => {
     }),
     address: new Field(''),
   });
-  form.$onValidate().then(() => {
-    expect(form.age.$valid).toBe(ValidType.Invalid);
-    expect(form.$valid).toBe(ValidType.Invalid);
-    form.age.$ignore = true;
-    form.$onValidate().then(() => {
-      expect(form.$valid).toBe(ValidType.Valid);
-      done();
-    });
-  });
+  await form.$onValidate();
+  expect(form.age.$valid).toBe(ValidType.Invalid);
+  expect(form.$valid).toBe(ValidType.Invalid);
+  form.age.$ignore = true;
+  await form.$onValidate();
+  expect(form.$valid).toBe(ValidType.Valid);
 });

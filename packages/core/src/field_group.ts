@@ -2,7 +2,7 @@ import { ChildrenState } from './child_state';
 import { NonEnumerable } from './decorator';
 import { BaseField, BaseFieldOpts, EachFieldCallback, IDENTITY } from './field';
 import { FieldCompose, FieldComposeState, FieldComposeStateOpts } from './field_compose';
-import { FieldState, FieldStateOpts, ValidType } from './field_state';
+import { ValidType } from './field_state';
 import { ToFields } from './types';
 
 export type FieldGroupOpts<T> = Omit<BaseFieldOpts<T>, 'receive' | 'transform'>;
@@ -12,12 +12,6 @@ export type FieldGroupChildrenType<T extends object> = {
 };
 
 export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChildrenType<T>> {
-  @NonEnumerable
-  private $initialChildren: FieldGroupChildrenType<T>;
-
-  @NonEnumerable
-  private $initialValid: ValidType;
-
   constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
     const value: any = {};
     const raw: any = {};
@@ -55,9 +49,7 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
             modified = true;
           }
           if (modified) {
-            const copyChildren = { ...target.$children };
-            copyChildren[p as Exclude<keyof T, undefined>] = newValue;
-            target.$children = copyChildren;
+            target.$children[p as Exclude<keyof T, undefined>] = newValue;
             proxy.$rebuildState(true);
           } else {
             target.$children[p as Exclude<keyof T, undefined>] = newValue;
@@ -83,9 +75,7 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
           if (deleteValue instanceof BaseField) {
             deleteValue.$parent = undefined;
           }
-          const copyChildren = { ...target.$children };
-          delete copyChildren[p as Exclude<keyof T, undefined>];
-          target.$children = copyChildren;
+          delete target.$children[p as Exclude<keyof T, undefined>];
           proxy.$rebuildState(true);
           return true;
         }
@@ -95,8 +85,10 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
     Object.values(this.$children).forEach((child: any) => {
       child.$parent = proxy;
     });
-    this.$initialChildren = this.$children;
-    this.$initialValid = opts?.valid ?? ValidType.Valid;
+    this.$initial = {
+      value: { ...this.$children },
+      valid: opts?.valid ?? ValidType.Valid,
+    };
     proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
     return proxy;
   }
@@ -142,13 +134,13 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
 
   @NonEnumerable
   $onReset(): void {
-    this.$children = this.$initialChildren;
-    this.$resetState();
+    super.$onReset();
+    this.$children = this.$initial.value;
     this.$eachField((field) => {
       field.$onReset();
       return true;
     });
-    this.$initEffectsState(this.$initialValid);
+    this.$initEffectsState(this.$initial.valid);
     this.$rebuildState(true);
   }
 }

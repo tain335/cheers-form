@@ -42,7 +42,7 @@ type SingleRequiredName = {
   name: string;
 };
 
-test('[form] initial unknown', (done) => {
+test('[form] initial unknown', async () => {
   const form = new Form<SingleRequiredName>({
     name: new Field('', {
       valid: ValidType.Unknown,
@@ -61,10 +61,9 @@ test('[form] initial unknown', (done) => {
   });
 
   expect(form.$valid).toBe(ValidType.Unknown);
-  done();
 });
 
-test('[form] single name required', (done) => {
+test('[form] single name required', async () => {
   const form = new Form<SingleRequiredName>({
     name: new Field('', {
       valid: ValidType.Unknown,
@@ -82,12 +81,10 @@ test('[form] single name required', (done) => {
     }),
   });
 
-  form.$onValidate().then(() => {
-    done();
-  });
+  await form.$onValidate();
 });
 
-test('[form] with number: 1', (done) => {
+test('[form] with number: 1', async () => {
   const form = new Form<{ input: number }>({
     input: new Field<number>(undefined, {
       receive: (v) => (!v ? '' : String(v)),
@@ -105,16 +102,13 @@ test('[form] with number: 1', (done) => {
     }),
   });
   expect(form.$valid).toBe(ValidType.Valid);
-  form.$onValidate().then(() => {
-    form.input.$onChange('3');
-    form.$onValidate().then(() => {
-      expect(form.input.$value).toBe(3);
-      done();
-    });
-  });
+  await form.$onValidate();
+  form.input.$onChange('3');
+  await form.$onValidate();
+  expect(form.input.$value).toBe(3);
 });
 
-test('[form] with number: 2', (done) => {
+test('[form] with number: 2', async () => {
   const form = new Form<{ input: number }>({
     input: new Field<number>(undefined, {
       receive: (v) => (!v ? '' : String(v)),
@@ -133,13 +127,11 @@ test('[form] with number: 2', (done) => {
   });
   expect(form.$valid).toBe(ValidType.Valid);
   form.input.$onChange('3');
-  form.$onValidate().then(() => {
-    expect(form.input.$value).toBe(3);
-    done();
-  });
+  await form.$onValidate();
+  expect(form.input.$value).toBe(3);
 });
 
-test('[form] with number 3', (done) => {
+test('[form] with number 3', async () => {
   const form = new Form<{ input: number }>({
     input: new Field<number>(undefined, {
       receive: (v) => (!v ? '' : String(v)),
@@ -159,13 +151,11 @@ test('[form] with number 3', (done) => {
   expect(form.$valid).toBe(ValidType.Valid);
   form.input.$onChange('3');
   form.input.$onChange('');
-  form.$onValidate().then(() => {
-    expect(form.input.$valid).toBe(ValidType.Valid);
-    done();
-  });
+  await form.$onValidate();
+  expect(form.input.$valid).toBe(ValidType.Valid);
 });
 
-test('[form] with number 4', (done) => {
+test('[form] with number 4', async () => {
   const form = new Form<{ input: number }>({
     input: new Field<number>(undefined, {
       receive: (v) => (!v ? '' : String(v)),
@@ -187,17 +177,14 @@ test('[form] with number 4', (done) => {
   });
   expect(form.$valid).toBe(ValidType.Unknown);
   form.input.$onChange('3');
-  form.input.$waitForExecutorDone().then(() => {
-    expect(form.input.$valid).toBe(ValidType.Valid);
-    form.input.$onChange('a');
-    form.$onValidate().then(() => {
-      expect(form.input.$valid).toBe(ValidType.Invalid);
-      done();
-    });
-  });
+  await form.input.$waitForExecutorDone();
+  expect(form.input.$valid).toBe(ValidType.Valid);
+  form.input.$onChange('a');
+  await form.$onValidate();
+  expect(form.input.$valid).toBe(ValidType.Invalid);
 });
 
-test('[form] with compose', (done) => {
+test('[form] with compose', async () => {
   const form = new Form<{ input: number }>(
     {
       input: new Field<number>(undefined, {
@@ -221,7 +208,7 @@ test('[form] with compose', (done) => {
     {
       validators: [
         new Validator({
-          debounce: 3000,
+          debounce: 300,
           watch(field) {
             return [field.$childrenState];
           },
@@ -238,12 +225,47 @@ test('[form] with compose', (done) => {
   );
   expect(form.$valid).toBe(ValidType.Unknown);
   form.input.$onChange('3');
-  form.input.$waitForExecutorDone().then(() => {
-    expect(form.input.$valid).toBe(ValidType.Invalid);
-    form.input.$onChange('a');
-    form.$onValidate().then(() => {
-      expect(form.input.$valid).toBe(ValidType.Invalid);
-      done();
-    });
+  await form.input.$waitForExecutorDone();
+  expect(form.input.$valid).toBe(ValidType.Invalid);
+  form.input.$onChange('a');
+  await form.$onValidate();
+  expect(form.input.$valid).toBe(ValidType.Invalid);
+});
+
+test('[form] with self modified', async () => {
+  const validator = new Validator<{ name: string }>({
+    validate: async (field, updateState) => {
+      updateState(field, { disabled: true });
+    },
   });
+  const form = new Form<FormModel>(
+    {
+      name: new Field(''),
+      books: new FieldArray([]),
+      address: new FieldArray([new Field('string'), new Field('string2')]),
+    },
+    {
+      validators: [
+        new Validator({
+          watch: (field) => [field.books.$value?.length],
+          validate: async (field) => {},
+        }),
+        validator,
+      ],
+    },
+  );
+  form.name.$onChange('test');
+  expect(form.name.$selfModified).toBe(true);
+  expect(form.name.$modified).toBe(true);
+  expect(form.name.$manualSelfModified).toBe(true);
+  expect(form.name.$manualModified).toBe(true);
+  expect(form.$modified).toBe(true);
+  expect(form.$manualModified).toBe(true);
+  form.$onReset();
+  expect(form.name.$selfModified).toBe(false);
+  expect(form.name.$modified).toBe(false);
+  expect(form.name.$manualSelfModified).toBe(false);
+  expect(form.name.$manualModified).toBe(false);
+  expect(form.$modified).toBe(false);
+  expect(form.$manualModified).toBe(false);
 });

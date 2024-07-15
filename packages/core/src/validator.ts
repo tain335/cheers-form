@@ -3,13 +3,12 @@ import { UpdateFieldStateCallback } from './executor';
 import { $Field, BaseField } from './field';
 import { FieldComposeState } from './field_compose';
 import { genId } from './id';
-import { ToFields, ToOmitParentFields } from './types';
+import { ToOmitParentFields } from './types';
 
 export type ValidatorTriggerType = 'blur' | 'change' | 'manual' | 'any';
 
 interface ValidatorOptions<T> {
   debounce?: number;
-  predict?: (field: ToOmitParentFields<Partial<T>>) => boolean;
   validate: (field: ToOmitParentFields<Partial<T>>, updateState: UpdateFieldStateCallback) => Promise<void>;
   watch?: (field: ToOmitParentFields<Partial<T>>) => any[];
   trigger?: ValidatorTriggerType;
@@ -72,16 +71,15 @@ export class Validator<T> {
 
   $watch?: ValidatorOptions<T>['watch'] = () => [];
 
-  $predict?: ValidatorOptions<T>['predict'] = () => true;
+  // $predict?: ValidatorOptions<T>['predict'] = () => true;
 
   $debounce: number | undefined = 0;
 
-  constructor({ validate, watch, trigger, debounce, predict }: ValidatorOptions<T>) {
+  constructor({ validate, watch, trigger, debounce }: ValidatorOptions<T>) {
     this.$debounce = debounce;
     this.$$validateCallback = validate;
     this.$watch = watch;
     this.$trigger = trigger ?? 'change';
-    this.$predict = predict;
   }
 
   async $doValidate(field: ToOmitParentFields<Partial<T>>, updateState: UpdateFieldStateCallback) {
@@ -94,12 +92,6 @@ export class Validator<T> {
       id: `${field.$id}-${this.$id}`,
       type: EffectType.Validate,
       affectedFields: [],
-      predict: (field) => {
-        if (this.$predict) {
-          return this.$predict(field as unknown as ToOmitParentFields<Partial<T>>);
-        }
-        return true;
-      },
       watch: (field) => {
         if (this.$watch) {
           return this.$watch(field as unknown as ToOmitParentFields<Partial<T>>);

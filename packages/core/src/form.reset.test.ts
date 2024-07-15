@@ -12,7 +12,7 @@ type FormModel = {
   marker: FieldType<string[]>;
 };
 
-test('[form] update child field', (done) => {
+test('[form] update child field', async () => {
   const form = new Form<FormModel>(
     {
       name: new Field(''),
@@ -41,10 +41,9 @@ test('[form] update child field', (done) => {
 
   form.address[0] = new Field('CCC');
   expect(form.$value).toEqual({ name: 'AAA', books: [], address: ['CCC', 'BBB'], marker: [] });
-  done();
 });
 
-test('[form] reset', (done) => {
+test('[form] reset', async () => {
   const form = new Form<FormModel>(
     {
       name: new Field(''),
@@ -75,11 +74,9 @@ test('[form] reset', (done) => {
   form.address = new FieldArray([new Field('AAA'), new Field('BBB')]);
   expect(form.$value).toEqual({ name: 'AAA', books: [], address: ['AAA', 'BBB'], marker: [] });
 
-  form.$onValidate().then(() => {
-    expect(form.$valid).toBe(ValidType.Invalid);
-    form.$onReset();
-    expect(form.$value).toEqual({ name: '', books: [], address: ['string', 'string2'], marker: [] });
-    expect(form.$valid).toBe(ValidType.Valid);
-    done();
-  });
+  await form.$onValidate();
+  expect(form.$valid).toBe(ValidType.Invalid);
+  form.$onReset();
+  expect(form.$value).toEqual({ name: '', books: [], address: ['string', 'string2'], marker: [] });
+  expect(form.$valid).toBe(ValidType.Valid);
 });
