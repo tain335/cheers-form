@@ -30,4 +30,6 @@ inputA增大，inputB增大为input A的大小
 
 
 // Field添加syncField
-// Validator group使用parllel，field使用seq
+// Validator group使用parllel，field使用seq -- 不处理
+// Field，valid，message需要重计算的，需要缓存，继承一个base类型
+// 事件可以冒泡处理

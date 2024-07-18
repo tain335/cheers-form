@@ -152,7 +152,7 @@ test('[form] with number 3', async () => {
   form.input.$onChange('3');
   form.input.$onChange('');
   await form.$onValidate();
-  expect(form.input.$valid).toBe(ValidType.Valid);
+  expect(form.input.$valid).toBe(ValidType.Invalid);
 });
 
 test('[form] with number 4', async () => {

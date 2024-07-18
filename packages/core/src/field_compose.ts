@@ -53,7 +53,7 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
   @NonEnumerable
   get $message() {
     if (this.$state.$childrenState.$valid !== ValidType.Valid) {
-      return this.$state.$childrenState.$invalidFields[0].$message;
+      return this.$state.$childrenState.$invalidFields[0]?.$message;
     }
     return super.$message;
   }
@@ -61,7 +61,7 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
   @NonEnumerable
   get $error() {
     if (this.$state.$childrenState.$valid !== ValidType.Valid) {
-      return this.$state.$childrenState.$invalidFields[0].$error;
+      return this.$state.$childrenState.$invalidFields[0]?.$error;
     }
     return super.$error;
   }
@@ -170,8 +170,8 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
   @NonEnumerable
   $onValidate() {
     const traverse = (field: BaseField<unknown>) => {
-      if (this instanceof FieldCompose) {
-        field.$eachField((f) => {
+      if (field instanceof FieldCompose) {
+        (field as FieldCompose<unknown, ChildType>).$eachField((f) => {
           traverse(f);
           return true;
         });

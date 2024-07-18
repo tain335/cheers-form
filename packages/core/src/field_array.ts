@@ -69,10 +69,11 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
     this.$children.forEach((child) => {
       child.$parent = proxy as any;
     });
-    proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    const initialValid = this.$computeInitialValid(value, opts?.required, opts?.valid);
+    proxy.$initEffectsState(initialValid);
     this.$initial = {
       value: this.$children.slice(),
-      valid: opts?.valid ?? ValidType.Valid,
+      valid: initialValid,
     };
     return proxy;
   }
@@ -113,14 +114,17 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
   }
 
   @NonEnumerable
-  $onReset(): void {
+  $onReset(rebuildParent = true): void {
     super.$onReset();
     this.$children = this.$initial.value;
     this.$eachField((field) => {
-      field.$onReset();
+      field.$onReset(false);
       return true;
     });
     this.$initEffectsState(this.$initial.valid);
-    this.$rebuildState(false);
+    this.$setState(this.$mergeState(false));
+    if (rebuildParent && this.$parent) {
+      this.$parent.$rebuildState(false);
+    }
   }
 }

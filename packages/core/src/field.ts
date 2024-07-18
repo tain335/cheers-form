@@ -1,7 +1,7 @@
-import { flatten, isBoolean, isFunction, unionBy } from 'lodash';
+import { flatten, isBoolean, isFunction, isUndefined, unionBy } from 'lodash';
 import mitt from 'mitt';
 import { NonEnumerable } from './decorator';
-import { Effect, EffectType, getEffect } from './effect';
+import { Effect, getEffect } from './effect';
 import { FieldState, FieldStateOpts, ValidType } from './field_state';
 import { genId } from './id';
 import { Validator, ValidatorCompose } from './validator';
@@ -9,9 +9,8 @@ import { FieldGroup } from './field_group';
 import { FieldArray } from './field_array';
 import { debug } from './log';
 import { EffectExecutor } from './executor';
-import { Extract, ToFields, ToOmitParentFields } from './types';
-import { isDependenciesEqual } from './utils';
-import { FieldComposeState } from './field_compose';
+import { Extract, ToFields } from './types';
+import { isDependenciesEqual, isEmpty } from './utils';
 
 export const IDENTITY = Symbol('proxy_target_identity');
 
@@ -50,7 +49,7 @@ export type EffectState = {
 
 export type PendingEffect<T extends BaseField<any>> = {
   effect: Effect<T>;
-  deps: any[];
+  seq: number;
 };
 
 export function isSameEffectState(older: EffectState, newer: EffectState) {
@@ -72,6 +71,7 @@ type EmitterType<T extends BaseField<any>> = {
 // field_group 需要一个childState，包含子field $raw的集合和自身校验的集合
 // field_group 对外就是$raw + childState + self valid
 // reset需要重置modified/manualModified/readyToValidate?
+// selfValid 为 true 意味着 raw 跟 value必然是同步的，但是selfValid 为 false也不意味着raw 跟 valu不同步，可以updateField的时候同时更新value
 export class BaseField<T> {
   @NonEnumerable
   $id = genId();
@@ -227,6 +227,7 @@ export class BaseField<T> {
   @NonEnumerable
   $receive: ReceiveCallback<T>;
 
+  // 如果transform产生新的object value
   @NonEnumerable
   $transform: TransformCallback<T>;
 
@@ -367,9 +368,10 @@ export class BaseField<T> {
 
   @NonEnumerable
   $mergeState(rawChanged: boolean, opts?: Partial<FieldStateOpts<T>>): FieldState<T> {
-    const valid = this.$selfValid;
+    const selfValid = this.$selfValid;
     return new FieldState({
-      value: valid === ValidType.Valid ? this.$transform(opts?.raw ?? this.$raw) : this.$value,
+      // 不应该每次都transform新的值
+      value: selfValid === ValidType.Valid ? this.$transform(this.$raw) : this.$value,
       disabled: this.$state.$disabled,
       ignore: this.$state.$ignore,
       raw: this.$state.$raw,
@@ -381,8 +383,22 @@ export class BaseField<T> {
   @NonEnumerable
   protected $pushPendingEffect(effect: PendingEffect<BaseField<T>>) {
     this.$pendingEffects.push(effect);
-    this.$pendingEffects = unionBy(this.$pendingEffects, (item) => item.effect.id);
+    // this.$pendingEffects = unionBy(this.$pendingEffects, (item) => item.effect.id);
     debug('[Field] this.$pendingEffects.length: ', this.$pendingEffects.length);
+  }
+
+  @NonEnumerable
+  protected $computeInitialValid(value: any, required?: boolean, valid?: ValidType) {
+    if (!isUndefined(valid)) {
+      return valid;
+    }
+    if (required) {
+      if (isEmpty(value)) {
+        return ValidType.Unknown;
+      }
+      return ValidType.Invalid;
+    }
+    return ValidType.Valid;
   }
 
   // TODO change effects
@@ -419,11 +435,15 @@ export class BaseField<T> {
       const newDeps = effect.watch(this);
       if (force || !isDependenciesEqual(newDeps, effect.deps ?? [])) {
         pushed++;
+        effect.seq++;
         effect.deps = newDeps;
         effect.affectedFields.push(this as BaseField<unknown>);
+        if (effect.id === '1-0') {
+          debugger;
+        }
         // reset effect
         this.$updateEffectState(effect as Effect<BaseField<unknown>>, { valid: ValidType.Unknown, message: '' });
-        this.$pushPendingEffect({ effect, deps: effect.deps ?? [] });
+        this.$pushPendingEffect({ effect, seq: effect.seq });
       }
     });
     if (pushed) {
@@ -480,9 +500,6 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  $eachField(callback: EachFieldCallback<T>) {}
-
-  @NonEnumerable
   $rebuildState(rawChanged: boolean) {
     if (this.$parent) {
       this.$parent.$rebuildState(rawChanged);
@@ -504,7 +521,7 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  $onReset() {
+  $onReset(rebuildParent = true) {
     this.$effectState = new WeakMap();
     this.$readyToValidate = false;
     this.$manualSelfModified = false;
@@ -517,30 +534,33 @@ type FieldOpts<T> = BaseFieldOpts<T>;
 export class $Field<T> extends BaseField<Extract<T>> {
   constructor(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) {
     super(value, opts);
-    this.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    const initialValid = this.$computeInitialValid(value, opts?.required, opts?.valid);
+    this.$initEffectsState(initialValid);
     this.$initial = {
       value,
-      valid: opts?.valid ?? ValidType.Valid,
+      valid: initialValid,
     };
   }
 
   @NonEnumerable
-  $onReset(): void {
+  $onReset(rebuildParent = true): void {
     super.$onReset();
     this.$initEffectsState(this.$initial.valid);
     this.$setState(this.$mergeState(true, { raw: this.$receive(this.$initial.value, false) }));
-    this.$rebuildState(false);
+    if (rebuildParent) {
+      this.$rebuildState(false);
+    }
   }
 }
 
-function Factory<T>(): new <T>(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) => $Field<Extract<T>> {
+export type Field<T> = $Field<T>;
+
+function Factory<T>(): new <T>(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) => Field<Extract<T>> {
   return class {
     constructor(value: Extract<T> | undefined, opts?: FieldOpts<Extract<T>>) {
       return new $Field(value, opts);
     }
   } as any;
 }
-
-export type Field<T> = $Field<T>;
 
 export const Field = Factory();

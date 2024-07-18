@@ -1,6 +1,6 @@
 module.exports = {
   root: true,
-  ignorePatterns: ['.eslintrc.js', 'prettier.config.js', 'commitlint.config.js', 'config-overrides.js', 'scripts/**', 'i18n/**', 'gulpFile.js', 'jest.config.js'],
+  ignorePatterns: ['.eslintrc.js', 'prettier.config.js', 'commitlint.config.js', 'config-overrides.js', 'scripts/**', 'i18n/**', 'gulpFile.js', 'jest.config.js', 'vite.config.js'],
   extends: ['airbnb', 'prettier', 'plugin:prettier/recommended', 'plugin:react/recommended', 'plugin:@typescript-eslint/recommended'],
   env: {
     browser: true

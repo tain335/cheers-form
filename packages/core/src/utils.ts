@@ -1,4 +1,4 @@
-import { isNull, isUndefined } from 'lodash';
+import { isArray, isBoolean, isNumber } from 'lodash';
 
 export abstract class DependencyCompare {
   abstract isEqual(other: DependencyCompare): boolean;
@@ -27,4 +27,17 @@ export function isDependenciesEqual(newDependencies: any[], oldDependencies: any
     }
   }
   return true;
+}
+
+export function isEmpty(value: any) {
+  if (isArray(value)) {
+    return value.length === 0;
+  }
+  if (isBoolean(value)) {
+    return false;
+  }
+  if (isNumber(value)) {
+    return false;
+  }
+  return !value;
 }

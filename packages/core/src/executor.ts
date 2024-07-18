@@ -91,13 +91,13 @@ export class EffectExecutor {
           const validateTasks: EffectTask[] = [];
           debug(`[Executor] fields length: ${fields.length}`);
           fields.forEach((field) => {
-            const effects = remove(field.$pendingEffects, (effect) => {
-              return effect.effect.type === EffectType.Change;
+            const effects = remove(field.$pendingEffects, (pending) => {
+              return pending.effect.type === EffectType.Change;
             });
             if (effects.length) {
               const task: EffectTask = {
                 field,
-                pendingsEffects: effects,
+                pendingsEffects: effects.filter((pending) => pending.effect.seq === pending.seq),
               };
               changeTasks.push(task);
             }
@@ -108,13 +108,13 @@ export class EffectExecutor {
           } else {
             fields.forEach((field) => {
               debug(`[Executor] field $pendingEffects length: ${field.$pendingEffects.length}`);
-              const effects = remove(field.$pendingEffects, (effect) => {
-                return effect.effect.type === EffectType.Validate;
+              const effects = remove(field.$pendingEffects, (pending) => {
+                return pending.effect.type === EffectType.Validate;
               });
               if (effects.length) {
                 const task: EffectTask = {
                   field,
-                  pendingsEffects: effects,
+                  pendingsEffects: effects.filter((pending) => pending.effect.seq === pending.seq),
                 };
                 validateTasks.push(task);
               }
@@ -146,16 +146,16 @@ export class EffectExecutor {
     this.effects.set(effect, count - 1);
   }
 
-  private startEffect(effect: Effect<BaseField<unknown>>, field: BaseField<unknown>, deps: any[]) {
+  private startEffect(effect: Effect<BaseField<unknown>>, field: BaseField<unknown>, seq: number) {
     debug('[Executor] start effect');
     this.inProgressEffectCount++;
     this.markEffect(effect);
     debug('[Executor] effect fields length', effect.affectedFields.length);
     const beforeApplyFields = uniqBy(effect.affectedFields, (item) => item);
     const afterApplyFields: BaseField<unknown>[] = [];
-    effect.affectedFields = [];
+    // 应该支持value的更新
     const updateField: UpdateFieldStateCallback = (targetField, newState) => {
-      if (isDependenciesEqual(effect.watch(field), deps)) {
+      if (effect.seq === seq) {
         const opts: FieldStateOpts<unknown> = {
           value: targetField.$state.$value,
           raw: targetField.$state.$raw,
@@ -182,6 +182,9 @@ export class EffectExecutor {
             // Update Field
             targetField.$setState(newFieldState);
             targetField.$pushValidators('change');
+          } else {
+            // 触发一次更新
+            targetField.$emitter.emit('update');
           }
           // effect update 也要更新parent state
           if ((targetField as BaseField<any>).$parent) {
@@ -196,6 +199,7 @@ export class EffectExecutor {
     // TODO 应该根据effect的设置来决定是否重置effect状态
     effect.apply(field, updateField).finally(() => {
       this.completeEffect(
+        seq,
         effect,
         beforeApplyFields,
         uniqBy(afterApplyFields, (item) => item),
@@ -205,6 +209,7 @@ export class EffectExecutor {
   }
 
   private completeEffect(
+    seq: number,
     effect: Effect<BaseField<unknown>>,
     beforeApplyFields: BaseField<unknown>[],
     afterApplyFields: BaseField<unknown>[],
@@ -212,24 +217,25 @@ export class EffectExecutor {
     this.inProgressEffectCount--;
     this.unmarkEffect(effect);
     debug('[Executor] complete effect');
-    afterApplyFields.forEach((field) => {
-      remove(beforeApplyFields, field);
-    });
+    if (effect.seq === seq) {
+      afterApplyFields.forEach((field) => {
+        remove(beforeApplyFields, field);
+      });
 
-    // 更新关联的field
-    effect.affectedFields = afterApplyFields.slice();
-
-    beforeApplyFields.forEach((field) => {
-      const updated = field.$updateEffectState(effect, { valid: ValidType.Valid });
-      if (updated) {
-        // 因为校验不会改变值，所以保持原样
-        field.$setState(field.$mergeState(false));
-        field.$pushValidators('change');
-        if (field.$parent) {
-          field.$parent.$rebuildState(false);
+      // 更新关联的field
+      effect.affectedFields = afterApplyFields.slice();
+      beforeApplyFields.forEach((field) => {
+        const updated = field.$updateEffectState(effect, { valid: ValidType.Valid });
+        if (updated) {
+          // 因为校验不会改变值，所以保持原样
+          field.$setState(field.$mergeState(false));
+          field.$pushValidators('change');
+          if (field.$parent) {
+            field.$parent.$rebuildState(false);
+          }
         }
-      }
-    });
+      });
+    }
 
     this.shouldDone();
   }
@@ -237,7 +243,7 @@ export class EffectExecutor {
   private execute(tasks: EffectTask[]) {
     for (const task of tasks) {
       for (const pending of task.pendingsEffects) {
-        this.startEffect(pending.effect, task.field, pending.deps);
+        this.startEffect(pending.effect, task.field, pending.seq);
       }
     }
     // 因为可能出现没有可执行的effect

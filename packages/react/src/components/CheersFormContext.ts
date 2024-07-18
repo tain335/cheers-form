@@ -1,5 +1,5 @@
 import React from 'react';
-import { BaseField, Form, FormType } from 'cheers-form/core';
+import { BaseField, Form, FormType } from 'cheers-form-core';
 import mitt, { Emitter, EventType } from 'mitt';
 
 export interface CheersFormContextValue<Events extends Record<EventType, unknown>> {

@@ -1,6 +1,7 @@
 import { NonEnumerable } from './decorator';
 import { EffectExecutor } from './executor';
 import { BaseField } from './field';
+import { FieldCompose } from './field_compose';
 import { $FieldGroup, FieldGroupChildrenType, FieldGroupOpts } from './field_group';
 import { debug } from './log';
 
@@ -14,17 +15,14 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
       const dirtyFields: BaseField<unknown>[] = [];
       const traverse = (field: BaseField<unknown>) => {
         if (field.$dirty) {
-          field.$eachField((f) => {
-            if (f.$dirty) {
-              traverse(f);
-              if (f.$pendingEffects.length) {
-                dirtyFields.push(f);
+          if (field instanceof FieldCompose) {
+            field.$eachField((f) => {
+              if (f.$dirty) {
+                traverse(f);
               }
-            } else {
-              f.$dirty = false;
-            }
-            return true;
-          });
+              return true;
+            });
+          }
           if (field.$pendingEffects.length) {
             dirtyFields.push(field);
           } else {
@@ -62,7 +60,7 @@ export type FormType<T extends Record<string, any>> = FieldGroupChildrenType<T> 
 function Wrapper<T extends Record<string, any>>(): new <T extends Record<string, any> = Record<string, unknown>>(
   children: FieldGroupChildrenType<T>,
   opts?: FieldGroupOpts<T>,
-) => FieldGroupChildrenType<T> & $FieldGroup<T> {
+) => FormType<T> {
   return class {
     constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
       return new $Form(children, opts);

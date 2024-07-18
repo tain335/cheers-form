@@ -71,8 +71,6 @@ export class Validator<T> {
 
   $watch?: ValidatorOptions<T>['watch'] = () => [];
 
-  // $predict?: ValidatorOptions<T>['predict'] = () => true;
-
   $debounce: number | undefined = 0;
 
   constructor({ validate, watch, trigger, debounce }: ValidatorOptions<T>) {
@@ -90,6 +88,7 @@ export class Validator<T> {
     const validator = this;
     return {
       id: `${field.$id}-${this.$id}`,
+      seq: 0,
       type: EffectType.Validate,
       affectedFields: [],
       watch: (field) => {

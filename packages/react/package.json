@@ -2,7 +2,6 @@
   "name": "react",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/index.js",
   "scripts": {
     "test": "jest --bail",
     "build": "npx tsc"
@@ -10,7 +9,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "cheers-form/core": "workspace:core@*",
+    "cheers-form-core": "workspace:core@*",
     "lodash": "^4.17.21",
     "mitt": "^3.0.1"
   },

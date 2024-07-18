@@ -85,11 +85,12 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
     Object.values(this.$children).forEach((child: any) => {
       child.$parent = proxy;
     });
+    const initialValid = this.$computeInitialValid(value, opts?.required, opts?.valid);
     this.$initial = {
       value: { ...this.$children },
-      valid: opts?.valid ?? ValidType.Valid,
+      valid: initialValid,
     };
-    proxy.$initEffectsState(opts?.valid ?? ValidType.Valid);
+    proxy.$initEffectsState(initialValid);
     return proxy;
   }
 
@@ -133,15 +134,18 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
   }
 
   @NonEnumerable
-  $onReset(): void {
+  $onReset(rebuildParent = true): void {
     super.$onReset();
     this.$children = this.$initial.value;
     this.$eachField((field) => {
-      field.$onReset();
+      field.$onReset(false);
       return true;
     });
     this.$initEffectsState(this.$initial.valid);
-    this.$rebuildState(true);
+    this.$setState(this.$mergeState(false));
+    if (rebuildParent && this.$parent) {
+      this.$parent.$rebuildState(false);
+    }
   }
 }
 
@@ -150,7 +154,7 @@ export type FieldGroup<T extends object> = FieldGroupChildrenType<T> & $FieldGro
 function Factory<T extends object>(): new <T extends object = Record<string, unknown>>(
   children: FieldGroupChildrenType<T>,
   opts?: FieldGroupOpts<T>,
-) => FieldGroupChildrenType<T> & $FieldGroup<T> {
+) => FieldGroup<T> {
   return class {
     constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
       return new $FieldGroup(children, opts);

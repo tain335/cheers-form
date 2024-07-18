@@ -34,7 +34,6 @@ test('[form] multi name no duplict', async () => {
   form.names.$onChange(fields);
   expect(form.$raw.names.length).toBe(2);
   await form.$waitForExecutorDone();
-  await form.$waitForExecutorDone();
   expect(form.$valid).toBe(ValidType.Valid);
   expect(form.names.$value).toEqual(['nick', 'nick2']);
   form.names.$onChange([...fields, new Field('nick')]);

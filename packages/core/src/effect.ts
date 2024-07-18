@@ -9,6 +9,7 @@ export enum EffectType {
 
 export type Effect<T extends BaseField<any>> = {
   id: string;
+  seq: number;
   deps?: any[];
   affectedFields: BaseField<unknown>[];
   type: EffectType;

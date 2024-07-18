@@ -1,7 +1,8 @@
-import React, { useContext, useImperativeHandle, useMemo, useRef } from 'react';
-import { BaseField, FormType } from 'cheers-form/core';
+import React, { RefAttributes, useContext, useImperativeHandle, useMemo, useRef } from 'react';
+import { BaseField, FormType } from 'cheers-form-core';
 import mitt from 'mitt';
 import { CheersFormContext, CheersFormContextValue, FormEvents } from './CheersFormContext';
+import { useFieldState } from '../hooks/useCheersFieldState';
 
 interface CheersFormProps<T extends Record<string, any>> {
   form: FormType<T>;
@@ -11,7 +12,7 @@ interface CheersFormProps<T extends Record<string, any>> {
   onScrollIntoView?: (el: HTMLElement) => void;
 }
 
-interface FormInstance<T extends Record<string, any>> {
+interface FormInstanceRef<T extends Record<string, any>> {
   el: HTMLFormElement | null;
   instance: FormType<T>;
   scrollTo: (field: BaseField<unknown>) => void;
@@ -20,7 +21,7 @@ interface FormInstance<T extends Record<string, any>> {
 export const CheersForm = React.forwardRef(
   <T extends Record<string, any>>(
     { form, children, style, className, onScrollIntoView }: CheersFormProps<T>,
-    ref: React.Ref<FormInstance<T>>,
+    ref: React.Ref<FormInstanceRef<T>>,
   ) => {
     const parentContext = useContext(CheersFormContext);
     const formRef = useRef<HTMLFormElement>(null);
@@ -44,6 +45,7 @@ export const CheersForm = React.forwardRef(
       },
       [form, formRef.current],
     );
+    useFieldState(form as BaseField<unknown>);
     return (
       <CheersFormContext.Provider value={providerValue}>
         <form className={className} ref={formRef} style={style}>
@@ -52,4 +54,5 @@ export const CheersForm = React.forwardRef(
       </CheersFormContext.Provider>
     );
   },
-);
+  // 实现React.forwardRef泛型类型
+) as <T extends Record<string, any>>(props: CheersFormProps<T> & RefAttributes<FormInstanceRef<T>>) => JSX.Element;
