@@ -3,6 +3,12 @@ import { Field, Form, Validator, ValidType } from 'cheers-form-core';
 import { bindField, CheersField, CheersForm } from 'cheers-form-react';
 import './App.css';
 
+function sleep(duration: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), duration);
+  });
+}
+
 interface InputProps {
   onChange?: (value: any) => void;
   onBlur?: () => void;
@@ -116,6 +122,24 @@ function createRegisterForm() {
   );
 }
 
+function createAsyncForm() {
+  return new Form<{ username: string }>({
+    username: new Field('', {
+      required: true,
+      validators: [
+        new Validator({
+          async validate(field, updateState) {
+            await sleep(1000);
+            if (!/^\w+$/g.test(field.$state.$raw)) {
+              updateState(field, { valid: ValidType.Invalid, message: 'Username format error' });
+            }
+          },
+        }),
+      ],
+    }),
+  });
+}
+
 export function App() {
   const loginForm = useMemo(() => {
     return createLoginForm();
@@ -123,6 +147,7 @@ export function App() {
   const registerForm = useMemo(() => {
     return createRegisterForm();
   }, []);
+  const asyncForm = useMemo(() => createAsyncForm(), []);
   return (
     <div>
       <h1>Login Form</h1>
@@ -201,6 +226,21 @@ export function App() {
             );
           }}
         </CheersField>
+      </CheersForm>
+
+      <h1>Async Form</h1>
+      <CheersForm form={asyncForm}>
+        <div>
+          <span>Username</span>
+          <CheersField name="username">
+            {(field) => (
+              <>
+                <Input {...bindField(field)} valid={field.$valid} message={field.$message} /> validating:{' '}
+                {field.$isInProgress() ? 'yes' : 'no'}
+              </>
+            )}
+          </CheersField>
+        </div>
       </CheersForm>
     </div>
   );

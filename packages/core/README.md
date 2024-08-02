@@ -32,4 +32,7 @@ inputA增大，inputB增大为input A的大小
 // Field添加syncField
 // Validator group使用parllel，field使用seq -- 不处理
 // Field，valid，message需要重计算的，需要缓存，继承一个base类型
-// 事件可以冒泡处理
+// 事件可以冒泡处理 不处理
+// 如何解决react/vue 跟 form的交互，行为状态控制
+
+// 加入transaction

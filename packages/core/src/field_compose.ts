@@ -169,6 +169,7 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
 
   @NonEnumerable
   $onValidate() {
+    this.$hookChain.source({ emitter: 'validate', field: this as BaseField<unknown> });
     const traverse = (field: BaseField<unknown>) => {
       if (field instanceof FieldCompose) {
         (field as FieldCompose<unknown, ChildType>).$eachField((f) => {
@@ -176,8 +177,9 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
           return true;
         });
       }
-      this.$setState(this.$mergeState(false));
-      field.$pushValidators('all', true);
+      this.$setState(this.$mergeState(false), () => {
+        field.$pushValidators('all', true);
+      });
     };
     traverse(this as BaseField<unknown>);
     if (this.$parent) {
@@ -216,11 +218,12 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
         field.$parent = this;
         return true;
       });
-      this.$setState(this.$mergeState(true));
-      this.$pushValidators('change');
-      if (this.$parent) {
-        this.$parent.$rebuildState(true);
-      }
+      this.$setState(this.$mergeState(true), () => {
+        this.$pushValidators('change');
+        if (this.$parent) {
+          this.$parent.$rebuildState(true);
+        }
+      });
     }
   }
 
@@ -230,6 +233,23 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
       return;
     }
     this.$change(raw, true);
+  }
+
+  @NonEnumerable
+  $onReset(rebuildParent = true): void {
+    super.$onReset();
+    this.$hookChain.source({ emitter: 'reset', field: this as BaseField<unknown> });
+    this.$children = this.$initial.value;
+    this.$eachField((field) => {
+      field.$onReset(false);
+      return true;
+    });
+    this.$initEffectsState(this.$initial.valid);
+    this.$setState(this.$mergeState(false), () => {
+      if (rebuildParent && this.$parent) {
+        this.$parent.$rebuildState(false);
+      }
+    });
   }
 
   @NonEnumerable
@@ -298,11 +318,14 @@ export abstract class FieldCompose<T, ChildType> extends BaseField<T> {
 
   @NonEnumerable
   $rebuildState(rawChanged: boolean) {
-    this.$setState(this.$mergeState(rawChanged));
-    this.$pushValidators('change');
-    if (this.$parent) {
-      this.$parent.$rebuildState(rawChanged);
-    }
+    this.$setState(this.$mergeState(rawChanged), () => {
+      if (rawChanged) {
+        this.$pushValidators('change');
+      }
+      if (this.$parent) {
+        this.$parent.$rebuildState(rawChanged);
+      }
+    });
   }
 
   abstract $eachField(callback: EachFieldCallback<any>): void;

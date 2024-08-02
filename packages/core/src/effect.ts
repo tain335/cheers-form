@@ -1,25 +1,25 @@
 import { UpdateFieldStateCallback } from './executor';
 import { BaseField } from './field';
+import { HookSource } from './hook_state';
 import { MultiWeakMap } from './multi_weakmap';
 
 export enum EffectType {
-  Change = 0,
-  Validate = 1,
+  Sync = 1,
+  Async = 2,
 }
 
 export type Effect<T extends BaseField<any>> = {
-  id: string;
+  // id: string;
   seq: number;
+  owner?: BaseField<unknown>;
   deps?: any[];
   affectedFields: BaseField<unknown>[];
   type: EffectType;
   watch: (field: T) => any[];
-  beforeApply?: () => void;
   apply: (field: T, updateField: UpdateFieldStateCallback) => Promise<void>;
-  afterApply?: () => void;
 };
 
-export function effect<T extends BaseField<any>>({
+export function changeEffect<T extends BaseField<any>>({
   action,
   watch,
 }: {
@@ -29,7 +29,7 @@ export function effect<T extends BaseField<any>>({
   return {
     deps: [],
     fields: [],
-    stage: EffectType.Change,
+    stage: EffectType.Sync,
     watch,
     action,
   };

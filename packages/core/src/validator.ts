@@ -2,6 +2,7 @@ import { Effect, EffectType } from './effect';
 import { UpdateFieldStateCallback } from './executor';
 import { $Field, BaseField } from './field';
 import { FieldComposeState } from './field_compose';
+import { getSource } from './hook_state';
 import { genId } from './id';
 import { ToOmitParentFields } from './types';
 
@@ -84,24 +85,18 @@ export class Validator<T> {
     await this.$$validateCallback(field, updateState);
   }
 
-  createEffect<S extends BaseField<T>>(field: S): Effect<BaseField<S>> {
+  createEffect<S extends BaseField<T>>(): Effect<BaseField<S>> {
     const validator = this;
     return {
-      id: `${field.$id}-${this.$id}`,
+      // id: `${field.$id}-${this.$id}`,
       seq: 0,
-      type: EffectType.Validate,
+      type: EffectType.Async,
       affectedFields: [],
       watch: (field) => {
         if (this.$watch) {
           return this.$watch(field as unknown as ToOmitParentFields<Partial<T>>);
         }
         return field instanceof $Field ? [field.$state.$raw] : [(field.$state as FieldComposeState<T>).$childrenState];
-      },
-      beforeApply: () => {
-        field.$emitter.emit('beforeValidate', this as Validator<unknown>);
-      },
-      afterApply: () => {
-        field.$emitter.emit('afterValidate', this as Validator<unknown>);
       },
       async apply(field, updateField) {
         if (validator.$debounce) {
@@ -134,6 +129,7 @@ export class ValidatorCompose<T> extends Validator<T> {
 }
 
 // 组合的validator应该关注都是同一个部分的信息，所以他们的watch都是统一的
+// 多个validator updateField，会重复覆盖之前的状态
 export class SequenceValidator<T> extends ValidatorCompose<T> {
   constructor(validators: Validator<T>[]) {
     super({ validate: async () => {} });

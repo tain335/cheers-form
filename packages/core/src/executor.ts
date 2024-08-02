@@ -1,21 +1,23 @@
-import { flatten, includes, remove, uniqBy } from 'lodash';
+import { flatten, includes, isString, remove, uniqBy } from 'lodash';
 import mitt from 'mitt';
 import { FieldStateOpts, ValidType } from './field_state';
 import { BaseField, PendingEffect } from './field';
 import { Effect, EffectType } from './effect';
 import { debug } from './log';
-import { isDependenciesEqual } from './utils';
 import { OmitParent } from './types';
+import { HookSource } from './hook_state';
 
 export type UpdateFieldStateCallback = (
   targetField: OmitParent<BaseField<any>>,
-  newState: Partial<
-    Omit<FieldStateOpts<BaseField<unknown>>, 'raw' | 'value'> & {
-      valid?: ValidType;
-      error?: any;
-      message?: string;
-    }
-  >,
+  newState:
+    | Partial<
+        Omit<FieldStateOpts<BaseField<unknown>>, 'raw' | 'value'> & {
+          valid?: ValidType;
+          error?: any;
+          message?: string;
+        }
+      >
+    | string,
 ) => boolean;
 
 function requestIdleCallbackPolyfill(
@@ -43,9 +45,9 @@ export class EffectExecutor {
 
   inProgressFields: Set<BaseField<unknown>> = new Set();
 
-  effects: WeakMap<Effect<BaseField<unknown>>, number> = new WeakMap();
+  inProgressEffects: WeakMap<Effect<BaseField<unknown>>, number> = new WeakMap();
 
-  schduledResolvers: (() => BaseField<unknown>[])[] = [];
+  schduledResolvers: ((flag: number) => BaseField<unknown>[])[] = [];
 
   emitter = mitt<{ done: void }>();
 
@@ -56,7 +58,7 @@ export class EffectExecutor {
   shouldDone() {
     Array.from(this.inProgressFields.values()).forEach((field) => {
       if (field.$pendingEffects.length === 0) {
-        field.$dirty = false;
+        field.$flag = 0;
         this.inProgressFields.delete(field);
       }
     });
@@ -64,67 +66,54 @@ export class EffectExecutor {
     if (this.isDone()) {
       debug('[Executor] done');
       this.emitter.emit('done');
-    } else {
+    } else if (!this.scheduled) {
       // 没有完成则继续触发下一轮
       this.scheduleNextTick();
     }
   }
 
   isEffectInProgress(effect: Effect<BaseField<unknown>>) {
-    return this.effects.get(effect);
+    return this.inProgressEffects.get(effect);
   }
 
   isFieldInProgress(field: BaseField<unknown>) {
     return this.inProgressFields.has(field);
   }
 
+  private executeWork(effectType: EffectType) {
+    const fields: BaseField<unknown>[] = [];
+    fields.push(...flatten(this.schduledResolvers.map((resolver) => resolver(effectType))));
+
+    debug(`[Executor] start, fields length: ${fields.length}`);
+    if (fields.length) {
+      const tasks: EffectTask[] = [];
+      fields.forEach((field) => {
+        this.inProgressFields.add(field);
+        debug(`[Executor] field $pendingEffects length: ${field.$pendingEffects.length}`);
+        const effects = remove(field.$pendingEffects, (pending) => {
+          return pending.effect.type === effectType;
+        });
+        if (effects.length) {
+          const task: EffectTask = {
+            field,
+            pendingsEffects: effects.filter((pending) => pending.effect.seq === pending.seq),
+          };
+          tasks.push(task);
+        }
+      });
+      debug(`[Executor] tasks length: ${tasks.length}`);
+      this.executeTasks(tasks);
+      // }
+    } else {
+      Promise.resolve().then(() => this.shouldDone());
+    }
+  }
+
   private scheduleNextTick() {
     ('requestIdleCallback' in globalThis ? requestIdleCallback : requestIdleCallbackPolyfill)(
       () => {
-        const fields: BaseField<unknown>[] = [];
-        fields.push(...flatten(this.schduledResolvers.map((resolver) => resolver())));
         this.scheduled = false;
-
-        debug(`[Executor] start, fields length: ${fields.length}`);
-        if (fields.length) {
-          const changeTasks: EffectTask[] = [];
-          const validateTasks: EffectTask[] = [];
-          debug(`[Executor] fields length: ${fields.length}`);
-          fields.forEach((field) => {
-            const effects = remove(field.$pendingEffects, (pending) => {
-              return pending.effect.type === EffectType.Change;
-            });
-            if (effects.length) {
-              const task: EffectTask = {
-                field,
-                pendingsEffects: effects.filter((pending) => pending.effect.seq === pending.seq),
-              };
-              changeTasks.push(task);
-            }
-          });
-          debug(`[Executor] changeTasks length: ${changeTasks.length}`);
-          if (changeTasks.length) {
-            this.execute(changeTasks);
-          } else {
-            fields.forEach((field) => {
-              debug(`[Executor] field $pendingEffects length: ${field.$pendingEffects.length}`);
-              const effects = remove(field.$pendingEffects, (pending) => {
-                return pending.effect.type === EffectType.Validate;
-              });
-              if (effects.length) {
-                const task: EffectTask = {
-                  field,
-                  pendingsEffects: effects.filter((pending) => pending.effect.seq === pending.seq),
-                };
-                validateTasks.push(task);
-              }
-            });
-            debug(`[Executor] validateTasks length: ${validateTasks.length}`);
-            this.execute(validateTasks);
-          }
-        } else {
-          Promise.resolve().then(() => this.shouldDone());
-        }
+        this.executeWork(EffectType.Async);
       },
       {
         timeout: 72,
@@ -133,24 +122,23 @@ export class EffectExecutor {
   }
 
   private markEffect(effect: Effect<BaseField<unknown>>) {
-    if (!this.effects.has(effect)) {
-      this.effects.set(effect, 1);
+    if (!this.inProgressEffects.has(effect)) {
+      this.inProgressEffects.set(effect, 1);
     } else {
-      const count = this.effects.get(effect) as number;
-      this.effects.set(effect, count + 1);
+      const count = this.inProgressEffects.get(effect) as number;
+      this.inProgressEffects.set(effect, count + 1);
     }
   }
 
   private unmarkEffect(effect: Effect<BaseField<unknown>>) {
-    const count = this.effects.get(effect) as number;
-    this.effects.set(effect, count - 1);
+    const count = this.inProgressEffects.get(effect) as number;
+    this.inProgressEffects.set(effect, count - 1);
+    if (count - 1 === 0) {
+      effect.owner?.$scheduleStateUpdate();
+    }
   }
 
-  private startEffect(effect: Effect<BaseField<unknown>>, field: BaseField<unknown>, seq: number) {
-    debug('[Executor] start effect');
-    this.inProgressEffectCount++;
-    this.markEffect(effect);
-    debug('[Executor] effect fields length', effect.affectedFields.length);
+  private startEffect(effect: Effect<BaseField<unknown>>, field: BaseField<unknown>, seq: number, source: HookSource) {
     const beforeApplyFields = uniqBy(effect.affectedFields, (item) => item);
     const afterApplyFields: BaseField<unknown>[] = [];
     // 应该支持value的更新
@@ -164,6 +152,9 @@ export class EffectExecutor {
           required: targetField.$state.$required,
         };
         let effectUpdated = false;
+        if (isString(newState)) {
+          newState = { valid: ValidType.Invalid, message: newState };
+        }
         if ('valid' in newState) {
           afterApplyFields.push(targetField as BaseField<any>);
           effectUpdated = targetField.$updateEffectState(effect, {
@@ -179,12 +170,14 @@ export class EffectExecutor {
             ...newState,
           });
           if (!targetField.$state.isEqual(newFieldState)) {
+            targetField.$hookChain.source(source);
             // Update Field
-            targetField.$setState(newFieldState);
-            targetField.$pushValidators('change');
+            targetField.$setState(newFieldState, () => {
+              targetField.$pushValidators('change');
+            });
           } else {
             // 触发一次更新
-            targetField.$emitter.emit('update');
+            targetField.$scheduleStateUpdate();
           }
           // effect update 也要更新parent state
           if ((targetField as BaseField<any>).$parent) {
@@ -195,24 +188,31 @@ export class EffectExecutor {
       }
       return false;
     };
-    effect.beforeApply?.();
-    // TODO 应该根据effect的设置来决定是否重置effect状态
-    effect.apply(field, updateField).finally(() => {
-      this.completeEffect(
-        seq,
-        effect,
-        beforeApplyFields,
-        uniqBy(afterApplyFields, (item) => item),
-      );
-      effect.afterApply?.();
+    effect.owner?.$hookChain.source(source);
+    effect.owner?.$hookChain.call('beforeExecuteEffect', effect, (effect) => {
+      debug('[Executor] start effect');
+      this.inProgressEffectCount++;
+      this.markEffect(effect);
+      debug('[Executor] effect fields length', effect.affectedFields.length);
+      // TODO 应该根据effect的设置来决定是否重置effect状态
+      effect.apply(field, updateField).finally(() => {
+        this.completeEffect(
+          effect,
+          beforeApplyFields,
+          uniqBy(afterApplyFields, (item) => item),
+          seq,
+          source,
+        );
+      });
     });
   }
 
   private completeEffect(
-    seq: number,
     effect: Effect<BaseField<unknown>>,
     beforeApplyFields: BaseField<unknown>[],
     afterApplyFields: BaseField<unknown>[],
+    seq: number,
+    source: HookSource,
   ) {
     this.inProgressEffectCount--;
     this.unmarkEffect(effect);
@@ -221,36 +221,42 @@ export class EffectExecutor {
       afterApplyFields.forEach((field) => {
         remove(beforeApplyFields, field);
       });
-
       // 更新关联的field
       effect.affectedFields = afterApplyFields.slice();
       beforeApplyFields.forEach((field) => {
         const updated = field.$updateEffectState(effect, { valid: ValidType.Valid });
         if (updated) {
           // 因为校验不会改变值，所以保持原样
-          field.$setState(field.$mergeState(false));
-          field.$pushValidators('change');
-          if (field.$parent) {
-            field.$parent.$rebuildState(false);
-          }
+          field.$setState(field.$mergeState(false), () => {
+            // field.$pushValidators('change');
+            if (field.$parent) {
+              // 因为field group是监听childrend的校验状态
+              field.$parent.$rebuildState(true);
+            }
+          });
         }
       });
     }
-
+    effect.owner?.$hookChain.source(source);
+    effect.owner?.$hookChain.call('afterExecuteEffect', effect, () => {});
     this.shouldDone();
   }
 
-  private execute(tasks: EffectTask[]) {
+  private executeTasks(tasks: EffectTask[]) {
+    let executed = false;
     for (const task of tasks) {
       for (const pending of task.pendingsEffects) {
-        this.startEffect(pending.effect, task.field, pending.seq);
+        executed = true;
+        this.startEffect(pending.effect, task.field, pending.seq, pending.source);
       }
     }
-    // 因为可能出现没有可执行的effect
-    Promise.resolve().then(() => this.shouldDone());
+    if (!executed) {
+      // 因为可能出现没有可执行的effect
+      Promise.resolve().then(() => this.shouldDone());
+    }
   }
 
-  registerResolver(dirtyFieldsResolver: () => BaseField<unknown>[]) {
+  registerResolver(dirtyFieldsResolver: (flag: number) => BaseField<unknown>[]) {
     this.schduledResolvers.push(dirtyFieldsResolver);
   }
 
@@ -259,5 +265,9 @@ export class EffectExecutor {
       this.scheduled = true;
       this.scheduleNextTick();
     }
+  }
+
+  exec() {
+    this.executeWork(EffectType.Sync);
   }
 }

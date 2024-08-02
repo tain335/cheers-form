@@ -112,19 +112,4 @@ export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArray
       callback(field, index);
     });
   }
-
-  @NonEnumerable
-  $onReset(rebuildParent = true): void {
-    super.$onReset();
-    this.$children = this.$initial.value;
-    this.$eachField((field) => {
-      field.$onReset(false);
-      return true;
-    });
-    this.$initEffectsState(this.$initial.valid);
-    this.$setState(this.$mergeState(false));
-    if (rebuildParent && this.$parent) {
-      this.$parent.$rebuildState(false);
-    }
-  }
 }

@@ -1,9 +1,11 @@
 import { NonEnumerable } from './decorator';
+import { EffectType } from './effect';
 import { EffectExecutor } from './executor';
 import { BaseField } from './field';
 import { FieldCompose } from './field_compose';
 import { $FieldGroup, FieldGroupChildrenType, FieldGroupOpts } from './field_group';
 import { debug } from './log';
+import { addFlag, hasFlag, removeFlag } from './utils';
 
 export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
   @NonEnumerable
@@ -11,13 +13,13 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
 
   constructor(children: FieldGroupChildrenType<T>, opts?: FieldGroupOpts<T>) {
     super(children, opts);
-    this.$executor.registerResolver(() => {
+    this.$executor.registerResolver((flag: number) => {
       const dirtyFields: BaseField<unknown>[] = [];
       const traverse = (field: BaseField<unknown>) => {
-        if (field.$dirty) {
+        if (hasFlag(field.$flag, flag)) {
           if (field instanceof FieldCompose) {
             field.$eachField((f) => {
-              if (f.$dirty) {
+              if (f.$flag) {
                 traverse(f);
               }
               return true;
@@ -26,7 +28,7 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
           if (field.$pendingEffects.length) {
             dirtyFields.push(field);
           } else {
-            field.$dirty = false;
+            field.$flag = removeFlag(field.$flag, flag);
           }
         }
       };
@@ -45,11 +47,13 @@ export class $Form<T extends Record<string, any>> extends $FieldGroup<T> {
   }
 
   @NonEnumerable
-  $markDirty() {
-    this.$dirty = true;
+  $markFlag(flag: number) {
+    this.$flag = addFlag(this.$flag, flag);
     if (this.$parent) {
-      this.$parent.$markDirty();
-    } else {
+      this.$parent.$markFlag(flag);
+    } else if (hasFlag(this.$flag, EffectType.Sync)) {
+      this.$executor.exec();
+    } else if (hasFlag(this.$flag, EffectType.Async)) {
       this.$executor.schedule();
     }
   }

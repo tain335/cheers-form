@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BaseField } from 'cheers-form-core';
+import { BaseField, onSubmitEffects, onUpdated } from 'cheers-form-core';
 
 export function useFieldState<T extends BaseField<unknown>>(field: T) {
   const [state, setState] = useState([field.$state, field.$valid]);
@@ -7,8 +7,13 @@ export function useFieldState<T extends BaseField<unknown>>(field: T) {
     const onUpdate = () => {
       setState([field.$state, field.$valid]);
     };
-    field.$emitter.on('update', onUpdate);
-    return () => field.$emitter.off('update', onUpdate);
+    const uninstall = field.composeHook(() => {
+      onUpdated((state, next, source) => {
+        onUpdate();
+        next(state);
+      });
+    });
+    return uninstall;
   }, [field.$id]);
   return state;
 }

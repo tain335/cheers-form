@@ -56,6 +56,7 @@ module.exports = {
     "class-methods-use-this": 0,
     "no-param-reassign": 0,
     "no-unused-vars": 0,
+    "no-bitwise": 0,
     "max-classes-per-file": 0,
     "no-constructor-return": 0,
     "@typescript-eslint/ban-ts-comment": 0,

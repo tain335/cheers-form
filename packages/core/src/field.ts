@@ -1,7 +1,6 @@
-import { flatten, isBoolean, isFunction, isUndefined, unionBy } from 'lodash';
-import mitt from 'mitt';
+import { flatten, isUndefined, uniq } from 'lodash';
 import { NonEnumerable } from './decorator';
-import { Effect, getEffect } from './effect';
+import { Effect, EffectType, getEffect } from './effect';
 import { FieldState, FieldStateOpts, ValidType } from './field_state';
 import { genId } from './id';
 import { Validator, ValidatorCompose } from './validator';
@@ -10,9 +9,13 @@ import { FieldArray } from './field_array';
 import { debug } from './log';
 import { EffectExecutor } from './executor';
 import { Extract, ToFields } from './types';
-import { isDependenciesEqual, isEmpty } from './utils';
+import { addFlag, isDependenciesEqual, isEmpty } from './utils';
+import { HookChain } from './hook_chain';
+import { HookSource, getSource, getUnstallHooks, setCurrentField } from './hook_state';
 
 export const IDENTITY = Symbol('proxy_target_identity');
+
+export type ComposeHook<T extends BaseField<any>> = (field: T) => void;
 
 export type ReceiveCallback<T> = (v: T | undefined, initial: boolean) => any;
 
@@ -20,7 +23,11 @@ export type TransformCallback<T> = (v: any) => T;
 
 export type BaseFieldOpts<T> = {
   // 用于某些字段等待初始化才可以校验，例如异步加载的下拉选项
-  lazyToValidate?: boolean | ((field: ToFields<T>) => boolean);
+  // lazyToValidate?: boolean | ((field: ToFields<T>) => boolean);
+  composeHooks?: (() => void)[];
+
+  changeEffects?: Effect<BaseField<T>>[];
+
   disabled?: boolean;
   // 用于处理表单某些部分不参与校验，例如分步表单
   ignore?: boolean;
@@ -28,9 +35,9 @@ export type BaseFieldOpts<T> = {
   // 初始化的校验状态，默认Valid
   valid?: ValidType;
   validators?: Validator<T>[];
-  // 用于value->raw
+  // 用于value -> raw
   receive?: ReceiveCallback<T>;
-  // 用于raw->value, 只有通过自身校验的值才会转换
+  // 用于raw -> value, 只有通过自身校验的值才会转换
   transform?: TransformCallback<T>;
 };
 
@@ -49,6 +56,7 @@ export type EffectState = {
 
 export type PendingEffect<T extends BaseField<any>> = {
   effect: Effect<T>;
+  source: HookSource;
   seq: number;
 };
 
@@ -56,14 +64,16 @@ export function isSameEffectState(older: EffectState, newer: EffectState) {
   return older.valid === newer.valid && older.error === newer.error && older.message === newer.message;
 }
 
-// TODO 暴露更多的状态和阶段
-type EmitterType<T extends BaseField<any>> = {
-  update: void;
-  // TODO
-  // beforeSelfValidate: void;
-  // afterSelfValidate: void;
-  beforeValidate: Validator<unknown>;
-  afterValidate: Validator<unknown>;
+export type ChangeCallback<T extends BaseField<any>> = (field: T) => Promise<void>;
+
+type HookChainType<T> = {
+  changed: { raw: any; manual: boolean };
+  updateSelfState: FieldState<T>;
+  submitEffects: PendingEffect<BaseField<T>>[];
+  beforeExecuteEffect: Effect<BaseField<unknown>>;
+  afterExecuteEffect: Effect<BaseField<unknown>>;
+  updated: FieldState<T>;
+  uninstall: BaseField<T>;
 };
 
 // field 关注的是$raw, 对外就是$raw + self valid
@@ -86,7 +96,7 @@ export class BaseField<T> {
   $state: FieldState<T>;
 
   @NonEnumerable
-  $dirty = false;
+  $flag = 0;
 
   // 要不要往上冒泡修改，如果往上修改如何reset?
   @NonEnumerable
@@ -99,20 +109,26 @@ export class BaseField<T> {
   $pendingEffects: PendingEffect<BaseField<T>>[] = [];
 
   @NonEnumerable
+  $changeEffects: Effect<BaseField<T>>[] = [];
+
+  @NonEnumerable
   $effectState: WeakMap<any, EffectState> = new WeakMap();
 
   @NonEnumerable
-  $emitter = mitt<EmitterType<BaseField<T>>>();
+  $holdEffectState: EffectState | undefined;
 
   @NonEnumerable
-  $lazyToValidate: boolean | ((field: any) => boolean) = false;
+  $hookChain = new HookChain<HookChainType<T>>();
 
   @NonEnumerable
-  $readyToValidate = false;
+  $statedUpdateScheduled = false;
 
   @NonEnumerable
   // @ts-ignore
   $initial: { value: any; valid: ValidType };
+
+  @NonEnumerable
+  $meta: Record<string, any> = {};
 
   @NonEnumerable
   get $value(): T | undefined {
@@ -139,9 +155,11 @@ export class BaseField<T> {
   }
 
   set $ignore(ignore: boolean) {
-    this.$setState(this.$mergeState(false, { ignore }));
-    this.$pushValidators('change');
-    this.$rebuildState(true);
+    this.$hookChain.source({ emitter: 'ignore', field: this as BaseField<unknown> });
+    this.$setState(this.$mergeState(false, { ignore }), () => {
+      this.$rebuildState(true);
+      this.$pushValidators('change');
+    });
   }
 
   @NonEnumerable
@@ -150,9 +168,11 @@ export class BaseField<T> {
   }
 
   set $disabled(disabled: boolean) {
-    this.$setState(this.$mergeState(false, { disabled }));
-    this.$pushValidators('change');
-    this.$rebuildState(false);
+    this.$hookChain.source({ emitter: 'disabled', field: this as BaseField<unknown> });
+    this.$setState(this.$mergeState(false, { disabled }), () => {
+      this.$rebuildState(false);
+      this.$pushValidators('change');
+    });
   }
 
   @NonEnumerable
@@ -161,9 +181,11 @@ export class BaseField<T> {
   }
 
   set $required(required: boolean) {
-    this.$setState(this.$mergeState(false, { required }));
-    this.$pushValidators('change');
-    this.$rebuildState(false);
+    this.$hookChain.source({ emitter: 'required', field: this as BaseField<unknown> });
+    this.$setState(this.$mergeState(false, { required }), () => {
+      this.$pushValidators('change');
+      this.$rebuildState(false);
+    });
   }
 
   @NonEnumerable
@@ -244,6 +266,12 @@ export class BaseField<T> {
       required: opts?.required ?? false,
     });
     this.$validators = opts?.validators ?? [];
+    this.$changeEffects = opts?.changeEffects ?? [];
+    if (opts?.composeHooks) {
+      for (const hook of opts.composeHooks) {
+        this.composeHook(hook);
+      }
+    }
   }
 
   @NonEnumerable
@@ -287,10 +315,10 @@ export class BaseField<T> {
         this.$validators.map((validator) => {
           if (validator instanceof ValidatorCompose) {
             return validator.$validators.map((subValidator) =>
-              getEffect([this.$self(), subValidator], () => subValidator.createEffect(this)),
+              getEffect([this.$self(), subValidator], () => subValidator.createEffect()),
             );
           }
-          return [getEffect([this.$self(), validator], () => validator.createEffect(this))];
+          return [getEffect([this.$self(), validator], () => validator.createEffect())];
         }),
       ).filter(Boolean);
       effects = effects.concat(validateEffects as Effect<BaseField<unknown>>[]);
@@ -309,6 +337,9 @@ export class BaseField<T> {
 
   @NonEnumerable
   $firstNotValidEffectState(self?: boolean) {
+    if (this.$holdEffectState && this.$holdEffectState.valid !== ValidType.Valid) {
+      return this.$holdEffectState;
+    }
     const effects = this.$getEffects(self);
     let firstUnknownState: EffectState | null = null;
     for (const effect of effects) {
@@ -324,10 +355,21 @@ export class BaseField<T> {
   }
 
   @NonEnumerable
-  $markDirty() {
-    this.$dirty = true;
+  $markFlag(flag: number) {
+    this.$flag = addFlag(this.$flag, flag);
     if (this.$parent) {
-      this.$parent.$markDirty();
+      this.$parent.$markFlag(flag);
+    }
+  }
+
+  @NonEnumerable
+  $scheduleStateUpdate() {
+    if (!this.$statedUpdateScheduled) {
+      this.$statedUpdateScheduled = true;
+      Promise.resolve().then(() => {
+        this.$statedUpdateScheduled = false;
+        this.$hookChain.call('updated', this.$state, () => {});
+      });
     }
   }
 
@@ -383,7 +425,7 @@ export class BaseField<T> {
   @NonEnumerable
   protected $pushPendingEffect(effect: PendingEffect<BaseField<T>>) {
     this.$pendingEffects.push(effect);
-    // this.$pendingEffects = unionBy(this.$pendingEffects, (item) => item.effect.id);
+    this.$pendingEffects = uniq(this.$pendingEffects);
     debug('[Field] this.$pendingEffects.length: ', this.$pendingEffects.length);
   }
 
@@ -401,24 +443,24 @@ export class BaseField<T> {
     return ValidType.Valid;
   }
 
-  // TODO change effects
+  @NonEnumerable
+  composeHook(hook: ComposeHook<BaseField<T>>) {
+    setCurrentField(this as BaseField<unknown>);
+    hook(this);
+    const uninstalls = getUnstallHooks();
+    setCurrentField(undefined);
+    return () => {
+      this.$hookChain.call('uninstall', this as BaseField<T>, () => {
+        for (const uninstall of uninstalls) {
+          uninstall();
+        }
+      });
+    };
+  }
+
   @NonEnumerable
   $pushValidators(trigger: 'change' | 'blur' | 'any' | 'all', force?: boolean) {
-    if (this.$lazyToValidate) {
-      if (!this.$readyToValidate) {
-        if (isBoolean(this.$lazyToValidate)) {
-          this.$readyToValidate = true;
-        } else if (isFunction(this.$lazyToValidate)) {
-          const ready = this.$lazyToValidate(this);
-          if (ready) {
-            this.$readyToValidate = ready;
-          }
-        } else {
-          throw new Error('not support lazyToValidate type');
-        }
-        return false;
-      }
-    }
+    let newFlag = 0;
     const validators = this.$validators.filter((validator) => {
       if (validator.$trigger === 'any' || trigger === 'all') {
         return true;
@@ -428,40 +470,62 @@ export class BaseField<T> {
       }
       return true;
     });
-    let pushed = 0;
     debug(`[Field] pushValidators type: ${trigger}, length: ${validators.length}`);
-    validators.forEach((validator) => {
+    const pendingEffects: PendingEffect<BaseField<T>>[] = [];
+    for (const validator of validators) {
       const effect = getEffect([this.$self(), validator]) as Effect<BaseField<T>>;
       const newDeps = effect.watch(this);
       if (force || !isDependenciesEqual(newDeps, effect.deps ?? [])) {
-        pushed++;
         effect.seq++;
+        effect.owner = this as BaseField<unknown>;
         effect.deps = newDeps;
         effect.affectedFields.push(this as BaseField<unknown>);
-        if (effect.id === '1-0') {
-          debugger;
+        pendingEffects.push({ effect, seq: effect.seq, source: getSource() as HookSource });
+        newFlag = addFlag(newFlag, EffectType.Async);
+      }
+    }
+    if (trigger === 'change') {
+      for (const effect of this.$changeEffects) {
+        const newDeps = effect.watch(this);
+        if (!isDependenciesEqual(newDeps, effect.deps ?? [])) {
+          effect.seq++;
+          effect.owner = this as BaseField<unknown>;
+          effect.deps = newDeps;
+          effect.affectedFields.push(this as BaseField<unknown>);
+          pendingEffects.push({ effect, seq: effect.seq, source: getSource() as HookSource });
+          newFlag = addFlag(newFlag, EffectType.Sync);
         }
-        // reset effect
-        this.$updateEffectState(effect as Effect<BaseField<unknown>>, { valid: ValidType.Unknown, message: '' });
-        this.$pushPendingEffect({ effect, seq: effect.seq });
+      }
+    }
+    this.$hookChain.call('submitEffects', pendingEffects, (pendingEffects) => {
+      for (const pending of pendingEffects) {
+        this.$updateEffectState(pending.effect as Effect<BaseField<unknown>>, {
+          valid: ValidType.Unknown,
+          message: '',
+        });
+        this.$pushPendingEffect(pending);
+      }
+      if (pendingEffects.length) {
+        this.$markFlag(newFlag);
       }
     });
-    if (pushed) {
-      this.$markDirty();
-    }
-    return Boolean(pushed);
   }
 
   @NonEnumerable
   $change(raw: any, manual = false) {
     if (raw !== this.$raw) {
-      this.$selfModified = true;
-      if (manual) {
-        this.$manualSelfModified = true;
-      }
-      this.$setState(this.$mergeState(true, { raw }));
-      this.$pushValidators('change');
-      this.$rebuildState(true);
+      this.$hookChain
+        .source({ emitter: 'change', field: this as BaseField<unknown> })
+        .call('changed', { raw, manual }, ({ raw, manual }) => {
+          this.$selfModified = true;
+          if (manual) {
+            this.$manualSelfModified = true;
+          }
+          this.$setState(this.$mergeState(true, { raw }), () => {
+            this.$rebuildState(true);
+            this.$pushValidators('change');
+          });
+        });
     }
   }
 
@@ -476,9 +540,11 @@ export class BaseField<T> {
   @NonEnumerable
   $onValidate() {
     // 需不需要更新状态？
-    this.$setState(this.$mergeState(false));
-    this.$pushValidators('all', true);
-    this.$rebuildState(false);
+    this.$hookChain.source({ emitter: 'validate', field: this as BaseField<unknown> });
+    this.$setState(this.$mergeState(false), (state) => {
+      this.$rebuildState(false);
+      this.$pushValidators('all', true);
+    });
     return this.$waitForExecutorDone().then(() => ({
       $valid: this.$valid,
       $selfValid: this.$selfValid,
@@ -488,14 +554,16 @@ export class BaseField<T> {
 
   @NonEnumerable
   $onBlur() {
+    this.$hookChain.source({ emitter: 'blur', field: this as BaseField<unknown> });
     this.$pushValidators('blur');
   }
 
   @NonEnumerable
-  $setState(state: FieldState<T>) {
-    this.$state = state;
-    Promise.resolve().then(() => {
-      this.$emitter.emit('update');
+  $setState(state: FieldState<T>, action?: (newState: FieldState<T>) => void) {
+    this.$hookChain.call('updateSelfState', state, () => {
+      this.$state = state;
+      this.$scheduleStateUpdate();
+      action?.(state);
     });
   }
 
@@ -508,7 +576,18 @@ export class BaseField<T> {
 
   @NonEnumerable
   $isInProgress() {
-    return this.$rootExecutor()?.isFieldInProgress(this as BaseField<unknown>) ?? false;
+    if (this.$pendingEffects.length) {
+      return true;
+    }
+    const inProgress = this.$rootExecutor()?.isFieldInProgress(this as BaseField<unknown>) ?? false;
+    if (!inProgress) {
+      for (const effect of this.$getSelfEffects()) {
+        if (this.$rootExecutor()?.isEffectInProgress(effect)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   @NonEnumerable
@@ -522,10 +601,45 @@ export class BaseField<T> {
 
   @NonEnumerable
   $onReset(rebuildParent = true) {
-    this.$effectState = new WeakMap();
-    this.$readyToValidate = false;
+    this.$clearState();
+    this.$meta = {};
     this.$manualSelfModified = false;
     this.$selfModified = false;
+  }
+
+  // 清除校验状态
+  @NonEnumerable
+  $clearState() {
+    this.$effectState = new WeakMap();
+    this.$holdEffectState = undefined;
+    this.$rebuildState(false);
+    this.$scheduleStateUpdate();
+  }
+
+  // 设置数据
+  @NonEnumerable
+  $set(name: string, value: any) {
+    this.$meta[name] = value;
+  }
+
+  @NonEnumerable
+  $del(name: string) {
+    this.$meta[name] = undefined;
+  }
+
+  // 设置状态
+  @NonEnumerable
+  $holdState(state: EffectState) {
+    this.$holdEffectState = state;
+    this.$rebuildState(false);
+    this.$scheduleStateUpdate();
+  }
+
+  @NonEnumerable
+  $unholdState() {
+    this.$holdEffectState = undefined;
+    this.$rebuildState(false);
+    this.$scheduleStateUpdate();
   }
 }
 
@@ -546,10 +660,14 @@ export class $Field<T> extends BaseField<Extract<T>> {
   $onReset(rebuildParent = true): void {
     super.$onReset();
     this.$initEffectsState(this.$initial.valid);
-    this.$setState(this.$mergeState(true, { raw: this.$receive(this.$initial.value, false) }));
-    if (rebuildParent) {
-      this.$rebuildState(false);
+    if (!rebuildParent) {
+      this.$hookChain.source({ emitter: 'reset', field: this as BaseField<unknown> });
     }
+    this.$setState(this.$mergeState(true, { raw: this.$receive(this.$initial.value, false) }), () => {
+      if (rebuildParent) {
+        this.$rebuildState(false);
+      }
+    });
   }
 }
 

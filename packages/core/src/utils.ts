@@ -41,3 +41,15 @@ export function isEmpty(value: any) {
   }
   return !value;
 }
+
+export function addFlag(mark: number, flag: number) {
+  return mark | flag;
+}
+
+export function removeFlag(mark: number, flag: number) {
+  return mark & ~flag;
+}
+
+export function hasFlag(mark: number, flag: number) {
+  return mark & flag;
+}

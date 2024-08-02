@@ -6,3 +6,4 @@ export * from './src/effect';
 export * from './src/executor';
 export * from './src/validator';
 export * from './src/field_state';
+export * from './src/compose_hooks';

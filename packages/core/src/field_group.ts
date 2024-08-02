@@ -132,21 +132,6 @@ export class $FieldGroup<T extends object> extends FieldCompose<T, FieldGroupChi
       }
     }
   }
-
-  @NonEnumerable
-  $onReset(rebuildParent = true): void {
-    super.$onReset();
-    this.$children = this.$initial.value;
-    this.$eachField((field) => {
-      field.$onReset(false);
-      return true;
-    });
-    this.$initEffectsState(this.$initial.valid);
-    this.$setState(this.$mergeState(false));
-    if (rebuildParent && this.$parent) {
-      this.$parent.$rebuildState(false);
-    }
-  }
 }
 
 export type FieldGroup<T extends object> = FieldGroupChildrenType<T> & $FieldGroup<T>;
