@@ -86,6 +86,7 @@ module.exports = {
     "no-await-in-loop": 0,
     "no-debugger": 1,
     "no-plusplus": 0,
+    "no-bitwise": 0,
     "no-loop-func": 0,
     "no-param-reassign": 1,
     "@typescript-eslint/ban-ts-comment": 0,

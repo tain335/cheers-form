@@ -1,4 +1,6 @@
 import { isArray, isBoolean, isNumber } from 'lodash';
+import { FormType } from './form';
+import { BaseField } from './field';
 
 export abstract class DependencyCompare {
   abstract isEqual(other: DependencyCompare): boolean;
@@ -61,4 +63,21 @@ export function markRaw(instance: any) {
       value: true,
     },
   });
+}
+
+export function targetField(form: FormType<Record<string, any>>, name: string) {
+  if (name === '*') {
+    return form as BaseField<unknown>;
+  }
+  const fieldNames = name.split('.');
+  let field: any = form;
+  while (fieldNames.length) {
+    const fieldName = fieldNames.shift();
+    if (fieldName === '$') {
+      field = field.$parent;
+    } else {
+      field = field[fieldName as string];
+    }
+  }
+  return field as BaseField<unknown>;
 }
