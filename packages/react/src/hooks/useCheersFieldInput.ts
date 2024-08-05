@@ -1,11 +1,11 @@
-import React from 'react';
 import { BaseField } from 'cheers-form-core';
-import { useFieldState } from './useCheersFieldState';
+import { useCheersFieldState } from './useCheersFieldState';
 
-export function useFieldInput<T extends BaseField<unknown>>(field: T) {
-  const state = useFieldState(field);
+export function useCheersFieldInput<T extends BaseField<unknown>>(field: T) {
+  const [state, valid] = useCheersFieldState(field);
   return {
-    ...state,
+    valid,
+    value: state.$raw,
     onBlur: field.$onBlur.bind(field),
     onChange: field.$onChange.bind(field),
   };

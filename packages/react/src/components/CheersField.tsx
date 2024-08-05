@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef } from 'react';
-import { BaseField, Field, FormType } from 'cheers-form-core';
+import { BaseField, FormType } from 'cheers-form-core';
 import { CheersFormContext } from './CheersFormContext';
-import { useFieldState } from '../hooks/useCheersFieldState';
+import { useCheersFieldState } from '../hooks/useCheersFieldState';
 
 interface CheersFieldProps<T> {
   name: string;
@@ -40,7 +40,7 @@ export function CheersField<T>({ name, children }: CheersFieldProps<T>) {
       context.emitter.off('scroll', scrollCallback);
     };
   }, [tfield, elRef.current]);
-  useFieldState(tfield);
+  useCheersFieldState(tfield);
   return React.cloneElement(children(tfield as BaseField<T>), {
     ref: elRef,
   });

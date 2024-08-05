@@ -2,7 +2,6 @@ import { Effect, EffectType } from './effect';
 import { UpdateFieldStateCallback } from './executor';
 import { $Field, BaseField } from './field';
 import { FieldComposeState } from './field_compose';
-import { getSource } from './hook_state';
 import { genId } from './id';
 import { ToOmitParentFields } from './types';
 
@@ -26,7 +25,10 @@ class DebounceHandler {
   // @ts-ignore
   private rejectFunc: (value: void | PromiseLike<void>) => void;
 
-  constructor(private handler: () => Promise<void>, private interval: number) {}
+  constructor(private handler: () => Promise<void>, private interval: number) {
+    this.handler = handler;
+    this.interval = interval;
+  }
 
   async wait(): Promise<void> {
     if (this.pending) {
@@ -46,7 +48,7 @@ class DebounceHandler {
     }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      this.handler()
+      this.handler?.()
         .then(() => {
           this.timer = -1;
           this.pending = undefined;
@@ -88,7 +90,6 @@ export class Validator<T> {
   createEffect<S extends BaseField<T>>(): Effect<BaseField<S>> {
     const validator = this;
     return {
-      // id: `${field.$id}-${this.$id}`,
       seq: 0,
       type: EffectType.Async,
       affectedFields: [],

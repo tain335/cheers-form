@@ -1,0 +1,26 @@
+{
+  "name": "eslint-config-cheers",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "engines": {
+    "node": ">=16.15.0",
+    "yarn": ">=1.22.19",
+    "npm": "please-use-pnpm"
+  },
+  "author": "yanbo.wu@shopee.wu",
+  "license": "UNLICENSE",
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint-config-airbnb": "^19.0.0",
+    "eslint-config-prettier": "^8.0.0",
+    "eslint-import-resolver-typescript": "^2.7.1",
+    "eslint-plugin-i18next": "^6.0.0-2",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-jsx-a11y": "^6.2.1",
+    "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-react": "^7.27.1",
+    "prettier": "^2.7.1"
+  }
+}

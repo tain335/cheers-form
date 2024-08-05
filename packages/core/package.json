@@ -13,6 +13,7 @@
     "mitt": "^3.0.1"
   },
   "devDependencies": {
-    "@types/lodash": "^4.17.4"
+    "@types/lodash": "^4.17.4",
+    "eslint-config-cheers": "workspace:eslint-config-cheers@*"
   }
 }

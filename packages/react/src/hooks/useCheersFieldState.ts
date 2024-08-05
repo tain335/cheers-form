@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { BaseField, onSubmitEffects, onUpdated } from 'cheers-form-core';
+import { useEffect, useState } from 'react';
+import { BaseField, FieldState, ValidType, onUpdated } from 'cheers-form-core';
 
-export function useFieldState<T extends BaseField<unknown>>(field: T) {
-  const [state, setState] = useState([field.$state, field.$valid]);
+export function useCheersFieldState<P, T extends BaseField<P>>(field: T): [FieldState<P>, ValidType] {
+  const [state, setState] = useState<[FieldState<P>, ValidType]>([field.$state, field.$valid]);
   useEffect(() => {
     const onUpdate = () => {
       setState([field.$state, field.$valid]);

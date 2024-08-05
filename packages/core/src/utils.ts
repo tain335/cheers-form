@@ -53,3 +53,12 @@ export function removeFlag(mark: number, flag: number) {
 export function hasFlag(mark: number, flag: number) {
   return mark & flag;
 }
+
+// https://github.com/vuejs/core/blob/main/packages/reactivity/src/reactive.ts
+export function markRaw(instance: any) {
+  Object.defineProperties(instance, {
+    __v_skip: {
+      value: true,
+    },
+  });
+}

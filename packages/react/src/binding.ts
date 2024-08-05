@@ -8,7 +8,7 @@ function isSyntheticEvent(event: any): event is React.SyntheticEvent {
 type FormElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
 function getEventValue(event: ChangeEvent<FormElement>): string | boolean | FileList | null {
-  const target = event.target;
+  const { target } = event;
 
   if (target instanceof HTMLInputElement) {
     if (target.type === 'checkbox' || target.type === 'radio') {

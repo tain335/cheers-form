@@ -2,7 +2,7 @@ import React, { RefAttributes, useContext, useImperativeHandle, useMemo, useRef 
 import { BaseField, FormType } from 'cheers-form-core';
 import mitt from 'mitt';
 import { CheersFormContext, CheersFormContextValue, FormEvents } from './CheersFormContext';
-import { useFieldState } from '../hooks/useCheersFieldState';
+import { useCheersFieldState } from '../hooks/useCheersFieldState';
 
 interface CheersFormProps<T extends Record<string, any>> {
   form: FormType<T>;
@@ -13,7 +13,7 @@ interface CheersFormProps<T extends Record<string, any>> {
 }
 
 interface FormInstanceRef<T extends Record<string, any>> {
-  el: HTMLFormElement | null;
+  el: HTMLDivElement | null;
   instance: FormType<T>;
   scrollTo: (field: BaseField<unknown>) => void;
 }
@@ -24,7 +24,7 @@ export const CheersForm = React.forwardRef(
     ref: React.Ref<FormInstanceRef<T>>,
   ) => {
     const parentContext = useContext(CheersFormContext);
-    const formRef = useRef<HTMLFormElement>(null);
+    const formRef = useRef<HTMLDivElement>(null);
     const providerValue = useMemo(() => {
       return {
         form,
@@ -45,12 +45,12 @@ export const CheersForm = React.forwardRef(
       },
       [form, formRef.current],
     );
-    useFieldState(form as BaseField<unknown>);
+    useCheersFieldState(form as BaseField<unknown>);
     return (
       <CheersFormContext.Provider value={providerValue}>
-        <form className={className} ref={formRef} style={style}>
+        <div className={className} ref={formRef} style={style}>
           {children}
-        </form>
+        </div>
       </CheersFormContext.Provider>
     );
   },

@@ -9,7 +9,7 @@ import { FieldArray } from './field_array';
 import { debug } from './log';
 import { EffectExecutor } from './executor';
 import { Extract, ToFields } from './types';
-import { addFlag, isDependenciesEqual, isEmpty } from './utils';
+import { addFlag, isDependenciesEqual, isEmpty, markRaw } from './utils';
 import { HookChain } from './hook_chain';
 import { HookSource, getSource, getUnstallHooks, setCurrentField } from './hook_state';
 
@@ -272,6 +272,7 @@ export class BaseField<T> {
         this.composeHook(hook);
       }
     }
+    markRaw(this);
   }
 
   @NonEnumerable

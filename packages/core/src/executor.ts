@@ -1,4 +1,4 @@
-import { flatten, includes, isString, remove, uniqBy } from 'lodash';
+import { flatten, isString, remove, uniqBy } from 'lodash';
 import mitt from 'mitt';
 import { FieldStateOpts, ValidType } from './field_state';
 import { BaseField, PendingEffect } from './field';
@@ -228,6 +228,7 @@ export class EffectExecutor {
         if (updated) {
           // 因为校验不会改变值，所以保持原样
           field.$setState(field.$mergeState(false), () => {
+            // 需要触发一次change事件？触发any
             // field.$pushValidators('change');
             if (field.$parent) {
               // 因为field group是监听childrend的校验状态

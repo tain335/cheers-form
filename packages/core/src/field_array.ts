@@ -1,5 +1,4 @@
 import { NonEnumerable } from './decorator';
-import { ValidType } from './field_state';
 import { BaseField, BaseFieldOpts, EachFieldCallback, Field, IDENTITY } from './field';
 import { FieldCompose, FieldComposeOpts, FieldComposeState } from './field_compose';
 import { ToFields } from './types';
@@ -10,7 +9,9 @@ export type FieldArrayOpts<T> = Omit<BaseFieldOpts<T>, 'receive' | 'transform'>;
 
 export type FieldArrayChildrenType<T extends Array<any>> = Array<ToFields<T[number]>>;
 
-export interface FieldArray<T extends Array<any>> extends FieldArrayChildrenType<T> {}
+export interface FieldArray<T extends Array<any>> extends FieldArrayChildrenType<T> {
+  _marker?: never;
+}
 
 export class FieldArray<T extends Array<any>> extends FieldCompose<T, FieldArrayChildrenType<T>> {
   constructor(children: FieldArrayChildrenType<T>, opts?: FieldArrayOpts<T>) {
